@@ -5,17 +5,30 @@ const SOAP = `<TcBspFrameworkResponse><ResponseData><Transaction><TransactionDat
 const REST = `<Envelope><Invoice><subtotal>10</subtotal><billingAddress><addrPhone>+1 815-389-3606</addrPhone></billingAddress><itemList><item><line>1</line><item>SKU-A</item><tcDiscountItem><item><amount>10.00</amount></item></tcDiscountItem></item></itemList></Invoice></Envelope>`
 
 describe('compareXml', () => {
-  it('supports adaptive aliases and nested penetration', () => {
+  it('compares without compatibility aliases or ignore rules', () => {
     const report = compareXml(SOAP, REST, 'adaptive', DEFAULT_RULES)
-    expect(report.summary.compatibilityScore).toBeGreaterThan(70)
-    expect(report.entries.some((e) => e.status === 'structuralMatch')).toBe(true)
+    expect(DEFAULT_RULES.pathAliases).toEqual({})
+    expect(DEFAULT_RULES.ignorePaths).toEqual([])
+    expect(DEFAULT_RULES.nestedPathAliases).toEqual({})
+    expect(report.entries.some((e) => e.soapPath?.includes('phone'))).toBe(true)
+    expect(report.entries.some((e) => e.restPath?.includes('addrPhone'))).toBe(true)
   })
 
-  it('keeps strict mode stricter than adaptive mode', () => {
+  it('keeps normalized mode value normalization while avoiding compatibility mappings', () => {
     const strict = compareXml(SOAP, REST, 'strict', DEFAULT_RULES)
-    const adaptive = compareXml(SOAP, REST, 'adaptive', DEFAULT_RULES)
+    const adaptive = compareXml(SOAP, REST, 'normalized', DEFAULT_RULES)
     expect(strict.summary.valueDifferences + strict.summary.missingFromCandidate).toBeGreaterThan(
       adaptive.summary.valueDifferences + adaptive.summary.missingFromCandidate,
     )
+  })
+
+  it('includes business-root XML sorted alphabetically at each level', () => {
+    const soap = '<Envelope><Invoice><b>2</b><a z="2" a="1">1</a></Invoice></Envelope>'
+    const rest = '<Root><Invoice><a a="1" z="2">1</a><b>3</b></Invoice></Root>'
+    const report = compareXml(soap, rest, 'normalized', DEFAULT_RULES)
+
+    expect(report.sortedXml.soap).toContain('<a a="1" z="2">1</a>\n  <b>2</b>')
+    expect(report.sortedXml.soapLines.some((line) => line.different)).toBe(true)
+    expect(report.sortedXml.restLines.some((line) => line.different)).toBe(true)
   })
 })

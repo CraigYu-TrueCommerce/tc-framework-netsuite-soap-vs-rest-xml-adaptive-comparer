@@ -15,40 +15,19 @@ Static GitHub Pages web tool for adaptively comparing NetSuite SOAP vs REST fina
 - Modes:
   - **Strict**: exact path/value comparison after XML parsing, order-independent
   - **Normalized**: applies normalizers without deep structural remapping
-  - **Adaptive**: applies aliases, collection key matching, nested penetration + normalizers
+  - **Adaptive**: reserved for structure-aware matching without built-in compatibility aliases
 - Adaptive root detection (prefers `TcBspFrameworkResponse/ResponseData/Transaction/TransactionData/Invoice`)
-- Rules editor JSON with built-in **NetSuite SOAP-to-REST Invoice Compatibility** preset
+- No compatibility/ignore preset rules; the default comparison does not hide paths or apply SOAP-to-REST aliases
 - Summary counts + compatibility score
-- Detailed report table (severity/status/path/values/reason)
+- CodeMirror-highlighted sorted XML comparison first, followed by a detailed flat report table
 - Search and filters by severity and status
 - Export report as JSON and CSV
 
-## Built-in invoice preset rules
+## Default comparison behavior
 
-Included defaults:
-
-- Collection matching
-  - `Invoice.itemList.item` matchBy: `line`, `internalId`, `item`, `orderLine`
-  - `Invoice.shipGroupList.shipGroup` matchBy: `id`
-  - `Invoice.taxList.tax` matchBy: `taxCode`, `taxRate`
-- Nested penetration alias
-  - `Invoice.itemList.item.tcDiscountItem.item -> Invoice.itemList.item`
-- Path aliases
-  - `subTotal -> subtotal`
-  - `transactionBillAddress.billPhone -> transactionBillAddress.billAddrPhone`
-  - `billingAddress.phone -> billingAddress.addrPhone`
-  - `transactionShipAddress.shipPhone -> transactionShipAddress.shipAddrPhone`
-  - `shippingAddress.phone -> shippingAddress.addrPhone`
-- Value alias examples
-  - `_unitedStates`, `USA -> United States`
-- Normalization options
-  - whitespace trimming/collapsing
-  - numeric (`10` vs `10.00`)
-  - percent handling (`-100` vs `-100.00%`)
-  - boolean (`True/False` vs `true/false`)
-  - date normalization (including date-only equivalence)
-  - phone normalization (`+18153893606`, `(815) 389-3606`, `815-389-3606`)
-  - configurable empty vs zero relationship (`strict`/`warning`)
+- Same-level XML nodes and attributes are sorted alphabetically in the XML difference view.
+- No path aliases, value aliases, ignore paths, collection matching rules, or nested path aliases are applied by default.
+- Normalization still supports whitespace, numeric, percent, boolean, date, and phone value formatting comparisons.
 
 ## Local development
 
