@@ -214,10 +214,9 @@ function App() {
 function HighlightLegend() {
   return (
     <div className="highlight-legend" aria-label="Highlight legend">
-      <span className="legend-original">SOAP-only or original changed line</span>
       <span className="legend-critical">REST differs from SOAP or SOAP line is missing</span>
       <span className="legend-warning">Same node name with different case only</span>
-      <span className="legend-info">REST-only extra line</span>
+      <span className="legend-success">REST-only extra line</span>
     </div>
   )
 }
@@ -294,18 +293,23 @@ function xmlLineHighlightExtension(lines: XmlDiffLine[]) {
       .filter((line) => line.highlight)
       .map((line) => [line.lineNumber, `cm-diff-${line.highlight}`]),
   )
+  const caseDiffRanges = new Map(
+    lines
+      .filter((line) => line.caseDiffRanges?.length)
+      .map((line) => [line.lineNumber, line.caseDiffRanges ?? []]),
+  )
 
   return ViewPlugin.fromClass(
     class {
       decorations: DecorationSet
 
       constructor(view: EditorView) {
-        this.decorations = buildLineDecorations(view, lineClasses)
+        this.decorations = buildLineDecorations(view, lineClasses, caseDiffRanges)
       }
 
       update(update: ViewUpdate) {
         if (update.docChanged || update.viewportChanged) {
-          this.decorations = buildLineDecorations(update.view, lineClasses)
+          this.decorations = buildLineDecorations(update.view, lineClasses, caseDiffRanges)
         }
       }
     },
@@ -315,12 +319,25 @@ function xmlLineHighlightExtension(lines: XmlDiffLine[]) {
   )
 }
 
-function buildLineDecorations(view: EditorView, lineClasses: Map<number, string>): DecorationSet {
-  const decorations = [...lineClasses.entries()]
+function buildLineDecorations(
+  view: EditorView,
+  lineClasses: Map<number, string>,
+  caseDiffRanges: Map<number, NonNullable<XmlDiffLine['caseDiffRanges']>>,
+): DecorationSet {
+  const lineDecorations = [...lineClasses.entries()]
     .filter(([lineNumber]) => lineNumber <= view.state.doc.lines)
     .map(([lineNumber, className]) => Decoration.line({ class: className }).range(view.state.doc.line(lineNumber).from))
 
-  return Decoration.set(decorations, true)
+  const characterDecorations = [...caseDiffRanges.entries()].flatMap(([lineNumber, ranges]) => {
+    if (lineNumber > view.state.doc.lines) return []
+
+    const line = view.state.doc.line(lineNumber)
+    return ranges.map((range) =>
+      Decoration.mark({ class: 'cm-diff-case-char' }).range(line.from + range.from, line.from + range.to),
+    )
+  })
+
+  return Decoration.set([...lineDecorations, ...characterDecorations], true)
 }
 
 export default App
