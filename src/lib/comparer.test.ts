@@ -136,10 +136,24 @@ describe('compareXml', () => {
     expect(html).toContain('&amp;amp;')
     expect(html).toContain('Highlight legend')
     expect(html).toContain('Same node name with different case only')
+    expect(html).toContain('<span class="value-char">changed value</span>')
+    expect(html).toContain('<span class="case-char">Case</span>')
     expect(html).toContain('<h2>Match Quality</h2>')
     expect(html).toContain('<th>Matched</th>')
     expect(html).not.toContain('Changed Entries')
     expect(html).not.toContain('REST-only extra line')
+  })
+
+  it('exports editable comments that can be saved in the standalone HTML report', () => {
+    const report = compareXml('<Invoice><a>1</a></Invoice>', '<Invoice><a>2</a></Invoice>', 'normalized', DEFAULT_RULES)
+    const html = reportToHtml(report)
+
+    expect(html).toContain('<th class="comment-col">Comment</th>')
+    expect(html).toContain('class="comment-cell"')
+    expect(html).toContain('placeholder="Add comment"')
+    expect(html).toContain('id="save-report"')
+    expect(html).toContain('target.textContent = source.value')
+    expect(html).toContain('xml-compare-report-with-comments.html')
   })
 
   it('exports CSV paths shifted into separate level columns', () => {
