@@ -146,6 +146,23 @@ export const INVOICE_SAMPLE_REST = `<Envelope>
 const DATE_ONLY = /^\d{4}-\d{2}-\d{2}$/
 const US_DATE_TIME = /^\d{1,2}\/\d{1,2}\/\d{4}(\s+\d{1,2}:\d{2}:\d{2}(\s?[AP]M)?)?$/i
 
+type TrustedPolicyFactory = {
+  createPolicy: (name: string, rules: { createHTML: (input: string) => string }) => {
+    createHTML: (input: string) => string
+  }
+}
+
+const trustedTypesFactory: TrustedPolicyFactory | undefined =
+  typeof window !== 'undefined'
+    ? (window as Window & { trustedTypes?: TrustedPolicyFactory }).trustedTypes
+    : undefined
+
+const trustedXmlPolicy = trustedTypesFactory
+  ? trustedTypesFactory.createPolicy('xml-compare-policy', {
+      createHTML: (input: string) => input,
+    })
+  : null
+
 export function compareXml(
   soapXml: string,
   restXml: string,
@@ -215,9 +232,11 @@ export function compareXml(
   return { mode, entries, summary }
 }
 
+
 function parseXml(xml: string): Document {
   const parser = new DOMParser()
-  const doc = parser.parseFromString(xml, 'application/xml')
+  const trustedXml = trustedXmlPolicy ? trustedXmlPolicy.createHTML(xml) : xml
+  const doc = parser.parseFromString(String(trustedXml), 'application/xml')
   const parseError = doc.querySelector('parsererror')
   if (parseError) {
     throw new Error(`Invalid XML: ${parseError.textContent ?? 'unknown parser error'}`)
@@ -399,7 +418,7 @@ function normalizeValue(
   }
 
   if (rules.normalizers.percent && /%/.test(current)) {
-    const numeric = Number(current.replace('%', '').trim())
+    const numeric = Number(current.replace(/%/g, '').trim())
     if (!Number.isNaN(numeric)) {
       normalizedBy.push('percent')
       current = String(numeric)
