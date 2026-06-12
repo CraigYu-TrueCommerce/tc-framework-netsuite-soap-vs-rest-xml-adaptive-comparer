@@ -590,6 +590,7 @@ function pairSameNodeLine(soapText: string, restText: string): AlignedDiffLine {
         type: 'changed',
         soapText,
         restText,
+        soapHighlight: 'critical',
         restHighlight: 'critical',
         restValueDiffRanges: [restLeaf.valueRange],
       }
@@ -671,7 +672,7 @@ export function reportToHtml(report: CompareReport): string {
   <style>
     body { font-family: Arial, sans-serif; margin: 1rem; color: #1f1f1f; font-size: 18px; }
     .summary { display: grid; grid-template-columns: repeat(auto-fit, minmax(360px, 1fr)); gap: 1rem; margin: .75rem 0 1rem; }
-    .summary-card, pre, table { border: 1px solid #ddd; }
+    .summary-card, table { border: 1px solid #ddd; }
     .summary-card { border-radius: 8px; overflow: hidden; background: #fff; box-shadow: 0 1px 3px rgb(0 0 0 / 8%); }
     .summary-card h2 { margin: 0; padding: .65rem .8rem; background: #f4f7fb; border-bottom: 1px solid #ddd; font-size: 1.05rem; }
     table { width: 100%; border-collapse: collapse; font-size: 1rem; }
@@ -680,15 +681,17 @@ export function reportToHtml(report: CompareReport): string {
     td { font-weight: 700; }
     .legend { display: flex; flex-wrap: wrap; gap: .5rem; margin: .75rem 0 1rem; }
     .legend span { border: 1px solid #ddd; border-left-width: 3px; padding: .3rem .45rem; }
-    .diff-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 1rem; }
-    pre { margin: 0; padding: .75rem; overflow: auto; line-height: 1.5; background: #fff; font-size: 1.05rem; }
-    .line { display: block; min-height: 1.4em; white-space: pre; }
+    .diff-wrap { overflow: auto; border: 1px solid #ddd; }
+    .diff-table { min-width: 1200px; border: 0; font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; font-size: 1.05rem; }
+    .diff-table th { position: sticky; top: 0; z-index: 1; width: 50%; background: #f4f7fb; }
+    .diff-table td { width: 50%; padding: 0; vertical-align: top; font-weight: 400; border-color: #ececec; }
+    .diff-table tr { border-bottom: 1px solid #f0f0f0; }
+    .line { display: block; min-height: 1.5em; padding: .05rem .5rem; line-height: 1.5; white-space: pre; }
     .critical { background: #fde7e9; border-left: 3px solid #c82333; }
     .warning { background: #fff3cd; border-left: 3px solid #d39e00; }
     .info { background: #e7f1ff; border-left: 3px solid #0b5ed7; }
     .case-char { background: #d39e00; color: #1f1f1f; font-weight: 700; }
     .value-char { background: #8b0000; color: #fff; font-weight: 700; }
-    @media (max-width: 960px) { .diff-grid { grid-template-columns: 1fr; } }
   </style>
 </head>
 <body>
@@ -718,30 +721,39 @@ export function reportToHtml(report: CompareReport): string {
     </div>
   </section>
   <section class="legend" aria-label="Highlight legend">
-    <span class="critical">REST differs from SOAP or SOAP line is missing</span>
+    <span class="critical">SOAP/REST line differs or SOAP line is missing</span>
     <span class="warning">Same node name with different case only</span>
   </section>
-  <section class="diff-grid">
-    <article>
-      <h2>SOAP / Baseline sorted XML</h2>
-      <pre>${linesToHtml(report.sortedXml.soapLines)}</pre>
-    </article>
-    <article>
-      <h2>REST / Candidate sorted XML</h2>
-      <pre>${linesToHtml(report.sortedXml.restLines)}</pre>
-    </article>
+  <section class="diff-wrap">
+    <table class="diff-table" aria-label="Aligned sorted XML differences">
+      <thead>
+        <tr>
+          <th>SOAP / Baseline sorted XML</th>
+          <th>REST / Candidate sorted XML</th>
+        </tr>
+      </thead>
+      <tbody>
+        ${alignedLinesToHtml(report.sortedXml.soapLines, report.sortedXml.restLines)}
+      </tbody>
+    </table>
   </section>
 </body>
 </html>`
 }
 
-function linesToHtml(lines: XmlDiffLine[]): string {
-  return lines
-    .map((line) => {
-      const className = line.highlight ? `line ${line.highlight}` : 'line'
-      return `<span class="${className}">${lineTextToHtml(line)}</span>`
-    })
+function alignedLinesToHtml(soapLines: XmlDiffLine[], restLines: XmlDiffLine[]): string {
+  const rowCount = Math.max(soapLines.length, restLines.length)
+  return Array.from({ length: rowCount }, (_, index) => {
+    const soapLine = soapLines[index] ?? { lineNumber: index + 1, text: '', different: true }
+    const restLine = restLines[index] ?? { lineNumber: index + 1, text: '', different: true }
+    return `<tr><td>${lineToHtml(soapLine)}</td><td>${lineToHtml(restLine)}</td></tr>`
+  })
     .join('\n')
+}
+
+function lineToHtml(line: XmlDiffLine): string {
+  const className = line.highlight ? `line ${line.highlight}` : 'line'
+  return `<span class="${className}">${lineTextToHtml(line)}</span>`
 }
 
 function lineTextToHtml(line: XmlDiffLine): string {
