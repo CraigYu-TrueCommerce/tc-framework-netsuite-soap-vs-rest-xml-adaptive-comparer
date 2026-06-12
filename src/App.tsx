@@ -216,7 +216,7 @@ function App() {
 function HighlightLegend() {
   return (
     <div className="highlight-legend" aria-label="Highlight legend">
-      <span className="legend-critical">REST value differs from SOAP or SOAP line is missing</span>
+      <span className="legend-critical">SOAP/REST line differs or SOAP line is missing</span>
       <span className="legend-warning">Same node name with different case only</span>
     </div>
   )

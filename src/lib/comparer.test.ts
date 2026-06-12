@@ -74,7 +74,7 @@ describe('compareXml', () => {
     const restBIndex = report.sortedXml.restLines.findIndex((line) => line.text.includes('<b>extra</b>'))
 
     expect(report.sortedXml.restLines[soapCIndex].text).toContain('<c>3</c>')
-    expect(report.sortedXml.soapLines[soapCIndex].highlight).toBeUndefined()
+    expect(report.sortedXml.soapLines[soapCIndex].highlight).toBe('critical')
     expect(report.sortedXml.restLines[soapCIndex].highlight).toBe('critical')
     expect(report.sortedXml.restLines[soapCIndex].valueDiffRanges).toHaveLength(1)
     expect(report.sortedXml.soapLines[restBIndex].text).toBe('')
@@ -108,12 +108,12 @@ describe('compareXml', () => {
     expect(restMemo?.valueDiffRanges).toBeUndefined()
   })
 
-  it('marks only the REST value dark red when same node values differ', () => {
+  it('marks both sides red and only the REST value dark red when same node values differ', () => {
     const report = compareXml('<Invoice><memo>SOAP</memo></Invoice>', '<Invoice><memo>REST</memo></Invoice>', 'normalized', DEFAULT_RULES)
     const restMemo = report.sortedXml.restLines.find((line) => line.text.includes('<memo>REST</memo>'))
     const soapMemo = report.sortedXml.soapLines.find((line) => line.text.includes('<memo>SOAP</memo>'))
 
-    expect(soapMemo?.highlight).toBeUndefined()
+    expect(soapMemo?.highlight).toBe('critical')
     expect(soapMemo?.valueDiffRanges).toBeUndefined()
     expect(restMemo?.highlight).toBe('critical')
     expect(restMemo?.valueDiffRanges).toEqual([{ from: 8, to: 12 }])
@@ -132,6 +132,7 @@ describe('compareXml', () => {
 
     expect(html).toContain('<title>XML Compare Report</title>')
     expect(html).toContain('SOAP / Baseline sorted XML')
+    expect(html).toContain('class="diff-table"')
     expect(html).toContain('&amp;amp;')
     expect(html).toContain('Highlight legend')
     expect(html).toContain('Same node name with different case only')
