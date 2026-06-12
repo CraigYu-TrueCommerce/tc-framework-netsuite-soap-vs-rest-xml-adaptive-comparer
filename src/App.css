@@ -80,6 +80,12 @@ input[type='file'] {
   background: #fafafa;
 }
 
+.xml-viewer-actions {
+  display: flex;
+  gap: 0.5rem;
+  align-items: center;
+}
+
 .xml-viewer-heading span,
 .changed-lines {
   color: #8a3b00;

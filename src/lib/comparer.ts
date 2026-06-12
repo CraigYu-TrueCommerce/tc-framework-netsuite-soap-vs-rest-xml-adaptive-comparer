@@ -270,14 +270,24 @@ function serializeElement(element: Element, depth: number): string {
     return `${indent}${openTag}${escapeXml((element.textContent ?? '').trim())}</${element.tagName}>`
   }
 
-  const sortedChildren = childElements.sort((a, b) => {
-    const tagCompare = a.tagName.localeCompare(b.tagName)
-    if (tagCompare !== 0) return tagCompare
-    return sortableElementText(a).localeCompare(sortableElementText(b))
-  })
+  const sortedChildren = childElements.sort(compareSortableElements)
   const children = sortedChildren.map((child) => serializeElement(child, depth + 1)).join('\n')
 
   return `${indent}${openTag}\n${children}\n${indent}</${element.tagName}>`
+}
+
+function compareSortableElements(a: Element, b: Element): number {
+  const typeCompare = Number(hasNestedElements(a)) - Number(hasNestedElements(b))
+  if (typeCompare !== 0) return typeCompare
+
+  const tagCompare = a.tagName.localeCompare(b.tagName)
+  if (tagCompare !== 0) return tagCompare
+
+  return sortableElementText(a).localeCompare(sortableElementText(b))
+}
+
+function hasNestedElements(element: Element): boolean {
+  return element.children.length > 0
 }
 
 function sortableElementText(element: Element): string {
@@ -391,6 +401,7 @@ function alignLinesByPosition(soapLines: string[], restLines: string[]): Aligned
 function pairChangedLines(operations: RawDiffOperation[]): AlignedDiffLine[] {
   const alignedLines: AlignedDiffLine[] = []
   let index = 0
+  const safePairLimit = 12
 
   while (index < operations.length) {
     const operation = operations[index]
@@ -411,21 +422,131 @@ function pairChangedLines(operations: RawDiffOperation[]): AlignedDiffLine[] {
       index += 1
     }
 
-    const maxChanges = Math.max(deletes.length, inserts.length)
-    for (let changeIndex = 0; changeIndex < maxChanges; changeIndex += 1) {
-      const soapText = deletes[changeIndex] ?? ''
-      const restText = inserts[changeIndex] ?? ''
-      if (soapText && restText) {
-        alignedLines.push({ type: 'changed', soapText, restText, soapHighlight: 'original', restHighlight: 'critical' })
-      } else if (soapText) {
-        alignedLines.push({ type: 'missingFromRest', soapText, restText, soapHighlight: 'original', restHighlight: 'critical' })
-      } else {
-        alignedLines.push({ type: 'extraInRest', soapText, restText, soapHighlight: 'info', restHighlight: 'info' })
-      }
+    const shouldPairChanges =
+      deletes.length > 0 &&
+      inserts.length > 0 &&
+      deletes.length === inserts.length &&
+      deletes.length <= safePairLimit &&
+      deletes.every((soapText, changeIndex) => leadingWhitespace(soapText) === leadingWhitespace(inserts[changeIndex]))
+
+    if (shouldPairChanges) {
+      deletes.forEach((soapText, changeIndex) => {
+        alignedLines.push({
+          type: 'changed',
+          soapText,
+          restText: inserts[changeIndex],
+          soapHighlight: 'original',
+          restHighlight: 'critical',
+        })
+      })
+      continue
     }
+
+    deletes.forEach((soapText) => {
+      alignedLines.push({ type: 'missingFromRest', soapText, restText: '', soapHighlight: 'original', restHighlight: 'critical' })
+    })
+
+    if (deletes.length > 0 && inserts.length > 0) {
+      alignedLines.push({ type: 'equal', soapText: '', restText: '' })
+    }
+
+    inserts.forEach((restText) => {
+      alignedLines.push({ type: 'extraInRest', soapText: '', restText, soapHighlight: 'info', restHighlight: 'info' })
+    })
   }
 
   return alignedLines
+}
+
+function leadingWhitespace(value: string): string {
+  return value.match(/^\s*/)?.[0] ?? ''
+}
+
+export function reportToHtml(report: CompareReport): string {
+  const changedRows = report.entries
+    .filter((entry) => entry.status !== 'exactMatch')
+    .map(
+      (entry) => `<tr>
+        <td>${escapeHtml(entry.severity)}</td>
+        <td>${escapeHtml(entry.status)}</td>
+        <td>${escapeHtml(entry.canonicalPath)}</td>
+        <td>${escapeHtml(entry.soapValue ?? '')}</td>
+        <td>${escapeHtml(entry.restValue ?? '')}</td>
+        <td>${escapeHtml(entry.note)}</td>
+      </tr>`,
+    )
+    .join('')
+
+  return `<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <title>XML Compare Report</title>
+  <style>
+    body { font-family: Arial, sans-serif; margin: 1rem; color: #1f1f1f; }
+    .summary { display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: .4rem; margin: .75rem 0 1rem; }
+    .summary div, pre, table { border: 1px solid #ddd; }
+    .summary div { padding: .4rem; background: #fafafa; }
+    .diff-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 1rem; }
+    pre { margin: 0; padding: .75rem; overflow: auto; line-height: 1.4; background: #fff; }
+    .line { display: block; min-height: 1.4em; white-space: pre; }
+    .original { background: #e8f7ec; border-left: 3px solid #218838; }
+    .critical { background: #fde7e9; border-left: 3px solid #c82333; }
+    .info { background: #e7f1ff; border-left: 3px solid #0b5ed7; }
+    table { width: 100%; border-collapse: collapse; margin-top: 1rem; font-size: .9rem; }
+    th, td { border: 1px solid #ddd; padding: .35rem; text-align: left; vertical-align: top; }
+    @media (max-width: 960px) { .diff-grid { grid-template-columns: 1fr; } }
+  </style>
+</head>
+<body>
+  <h1>XML Compare Report</h1>
+  <p>Mode: ${escapeHtml(report.mode)}</p>
+  <section class="summary">
+    <div>Matched: ${report.summary.matched}</div>
+    <div>Normalized/Warnings: ${report.summary.normalizedWarnings}</div>
+    <div>Value differences: ${report.summary.valueDifferences}</div>
+    <div>Missing from REST: ${report.summary.missingFromCandidate}</div>
+    <div>Extra in REST: ${report.summary.extraInCandidate}</div>
+    <div>Structural/adaptive matches: ${report.summary.structuralMatches}</div>
+    <div>Compatibility score: ${report.summary.compatibilityScore}%</div>
+  </section>
+  <section class="diff-grid">
+    <article>
+      <h2>SOAP / Baseline sorted XML</h2>
+      <pre>${linesToHtml(report.sortedXml.soapLines)}</pre>
+    </article>
+    <article>
+      <h2>REST / Candidate sorted XML</h2>
+      <pre>${linesToHtml(report.sortedXml.restLines)}</pre>
+    </article>
+  </section>
+  <h2>Changed Entries</h2>
+  <table>
+    <thead>
+      <tr><th>Severity</th><th>Status</th><th>Canonical Path</th><th>SOAP Value</th><th>REST Value</th><th>Note</th></tr>
+    </thead>
+    <tbody>${changedRows || '<tr><td colspan="6">No differences</td></tr>'}</tbody>
+  </table>
+</body>
+</html>`
+}
+
+function linesToHtml(lines: XmlDiffLine[]): string {
+  return lines
+    .map((line) => {
+      const className = line.highlight ? `line ${line.highlight}` : 'line'
+      return `<span class="${className}">${escapeHtml(line.text)}</span>`
+    })
+    .join('\n')
+}
+
+function escapeHtml(value: string): string {
+  return value
+    .replaceAll('&', '&amp;')
+    .replaceAll('<', '&lt;')
+    .replaceAll('>', '&gt;')
+    .replaceAll('"', '&quot;')
+    .replaceAll("'", '&#39;')
 }
 
 function findBusinessRoot(doc: Document): Element {

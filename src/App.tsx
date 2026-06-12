@@ -1,6 +1,7 @@
 import { useCallback, useMemo, useRef, useState, type ChangeEvent } from 'react'
 import CodeMirror from '@uiw/react-codemirror'
 import { xml } from '@codemirror/lang-xml'
+import { openSearchPanel } from '@codemirror/search'
 import { Decoration, EditorView, ViewPlugin, type DecorationSet, type ViewUpdate } from '@codemirror/view'
 import './App.css'
 import {
@@ -10,6 +11,7 @@ import {
   entriesToCsv,
   INVOICE_SAMPLE_REST,
   INVOICE_SAMPLE_SOAP,
+  reportToHtml,
   type CompareMode,
   type XmlDiffLine,
 } from './lib/comparer'
@@ -20,9 +22,6 @@ function App() {
   const [soapXml, setSoapXml] = useState('')
   const [restXml, setRestXml] = useState('')
   const [mode, setMode] = useState<CompareMode>('adaptive')
-  const [search, setSearch] = useState('')
-  const [severityFilter, setSeverityFilter] = useState<'all' | 'critical' | 'warning' | 'info'>('all')
-  const [statusFilter, setStatusFilter] = useState('all')
   const [error, setError] = useState('')
   const [report, setReport] = useState<ReturnType<typeof compareXml> | null>(null)
   const xmlExtensions = useMemo(() => [xml()], [])
@@ -51,29 +50,6 @@ function App() {
       })
     }
   }, [])
-
-  const statuses = useMemo(
-    () => ['all', ...(report ? [...new Set(report.entries.map((e) => e.status))] : [])],
-    [report],
-  )
-
-  const filteredEntries = useMemo(() => {
-    if (!report) return []
-    return report.entries.filter((entry) => {
-      const searchText = search.toLowerCase()
-      const textMatches =
-        !searchText ||
-        [entry.canonicalPath, entry.soapPath, entry.restPath, entry.soapValue, entry.restValue, entry.note]
-          .join(' ')
-          .toLowerCase()
-          .includes(searchText)
-
-      const severityMatches = severityFilter === 'all' || entry.severity === severityFilter
-      const statusMatches = statusFilter === 'all' || entry.status === statusFilter
-
-      return textMatches && severityMatches && statusMatches
-    })
-  }, [report, search, severityFilter, statusFilter])
 
   const readXmlFile =
     (setter: (value: string) => void) => async (event: ChangeEvent<HTMLInputElement>) => {
@@ -119,6 +95,11 @@ function App() {
   const onExportCsv = () => {
     if (!report) return
     downloadText('xml-compare-report.csv', entriesToCsv(report.entries), 'text/csv')
+  }
+
+  const onExportHtml = () => {
+    if (!report) return
+    downloadText('xml-compare-report.html', reportToHtml(report), 'text/html')
   }
 
   return (
@@ -186,25 +167,9 @@ function App() {
           </div>
 
           <div className="filters">
-            <input
-              type="search"
-              placeholder="Search path/value/note"
-              value={search}
-              onChange={(e) => setSearch(e.target.value)}
-            />
-            <select value={severityFilter} onChange={(e) => setSeverityFilter(e.target.value as typeof severityFilter)}>
-              <option value="all">All severities</option>
-              <option value="critical">Critical</option>
-              <option value="warning">Warning</option>
-              <option value="info">Info</option>
-            </select>
-            <select value={statusFilter} onChange={(e) => setStatusFilter(e.target.value)}>
-              {statuses.map((status) => (
-                <option key={status} value={status}>
-                  {status}
-                </option>
-              ))}
-            </select>
+            <button type="button" onClick={onExportHtml}>
+              Export HTML
+            </button>
             <button type="button" onClick={onExportJson}>
               Export JSON
             </button>
@@ -239,37 +204,6 @@ function App() {
             />
           </div>
 
-          <h3>Flat Difference List</h3>
-          <div className="table-wrap">
-            <table>
-              <thead>
-                <tr>
-                  <th>Severity</th>
-                  <th>Status</th>
-                  <th>Canonical Path</th>
-                  <th>SOAP Value</th>
-                  <th>REST Value</th>
-                  <th>SOAP Path</th>
-                  <th>REST Path</th>
-                  <th>Note/Reason</th>
-                </tr>
-              </thead>
-              <tbody>
-                {filteredEntries.map((entry, index) => (
-                  <tr key={`${entry.canonicalPath}-${entry.status}-${index}`}>
-                    <td>{entry.severity}</td>
-                    <td>{entry.status}</td>
-                    <td>{entry.canonicalPath}</td>
-                    <td>{entry.soapValue ?? ''}</td>
-                    <td>{entry.restValue ?? ''}</td>
-                    <td>{entry.soapPath ?? ''}</td>
-                    <td>{entry.restPath ?? ''}</td>
-                    <td>{entry.note}</td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
         </section>
       )}
     </main>
@@ -289,6 +223,7 @@ function XmlViewer({
   onCreateEditor: (view: EditorView) => void
   onScrollSync: (view: EditorView) => void
 }) {
+  const editorRef = useRef<EditorView | null>(null)
   const changedLines = lines.filter((line) => line.different).map((line) => line.lineNumber)
   const viewerValue = useMemo(() => lines.map((line) => line.text).join('\n'), [lines])
   const viewerExtensions = useMemo(
@@ -304,20 +239,35 @@ function XmlViewer({
     [extensions, lines, onScrollSync],
   )
 
+  const onSearch = () => {
+    if (!editorRef.current) return
+    editorRef.current.focus()
+    openSearchPanel(editorRef.current)
+  }
+
   return (
     <article className="xml-viewer">
       <div className="xml-viewer-heading">
         <h4>{title}</h4>
-        <span>{changedLines.length} changed lines</span>
+        <div className="xml-viewer-actions">
+          <button type="button" onClick={onSearch}>
+            Search
+          </button>
+          <span>{changedLines.length} changed lines</span>
+        </div>
       </div>
       <CodeMirror
         value={viewerValue}
         height="420px"
         extensions={viewerExtensions}
-        basicSetup={{ foldGutter: true, lineNumbers: true, highlightActiveLine: false }}
+        basicSetup={{ foldGutter: true, lineNumbers: true, highlightActiveLine: false, searchKeymap: true }}
         editable={false}
+        readOnly
         theme="light"
-        onCreateEditor={onCreateEditor}
+        onCreateEditor={(view) => {
+          editorRef.current = view
+          onCreateEditor(view)
+        }}
       />
       {changedLines.length > 0 && (
         <p className="changed-lines">Changed lines: {changedLines.slice(0, 60).join(', ')}</p>
