@@ -29,7 +29,7 @@ describe('compareXml', () => {
     const report = compareXml(soap, rest, 'normalized', DEFAULT_RULES)
 
     expect(report.sortedXml.soap).toContain(
-      '<a a="1" z="2">1</a>\n  <b>2</b>\n  <nestedA>\n    <c>3</c>\n  </nestedA>\n  <nestedB>',
+      '    <a a="1" z="2">1</a>\n    <b>2</b>\n    <nestedA>\n      <c>3</c>\n    </nestedA>\n    <nestedB>',
     )
     expect(report.sortedXml.soapLines.some((line) => line.different)).toBe(true)
     expect(report.sortedXml.restLines.some((line) => line.different)).toBe(true)
@@ -42,9 +42,7 @@ describe('compareXml', () => {
 
     expect(report.sortedXml.soapLines).toHaveLength(report.sortedXml.restLines.length)
     expect(report.sortedXml.soapLines.some((line) => line.different && line.text === '' && !line.highlight)).toBe(true)
-    expect(report.sortedXml.restLines.some((line) => line.text.includes('<b>2</b>') && line.highlight === 'success')).toBe(
-      true,
-    )
+    expect(report.sortedXml.restLines.some((line) => line.text.includes('<b>2</b>') && !line.highlight)).toBe(true)
   })
 
   it('adds a shared blank separator instead of pairing unrelated large diff blocks', () => {
@@ -65,9 +63,7 @@ describe('compareXml', () => {
     expect(report.sortedXml.soapLines.some((line) => line.text.includes('<a>1</a>') && line.highlight === 'critical')).toBe(
       true,
     )
-    expect(report.sortedXml.restLines.some((line) => line.text.includes('<b>1</b>') && line.highlight === 'success')).toBe(
-      true,
-    )
+    expect(report.sortedXml.restLines.some((line) => line.text.includes('<b>1</b>') && !line.highlight)).toBe(true)
   })
 
   it('aligns same-level nodes by name after inserting blanks for extra nodes', () => {
@@ -78,8 +74,9 @@ describe('compareXml', () => {
     const restBIndex = report.sortedXml.restLines.findIndex((line) => line.text.includes('<b>extra</b>'))
 
     expect(report.sortedXml.restLines[soapCIndex].text).toContain('<c>3</c>')
-    expect(report.sortedXml.soapLines[soapCIndex].highlight).toBe('critical')
+    expect(report.sortedXml.soapLines[soapCIndex].highlight).toBeUndefined()
     expect(report.sortedXml.restLines[soapCIndex].highlight).toBe('critical')
+    expect(report.sortedXml.restLines[soapCIndex].valueDiffRanges).toHaveLength(1)
     expect(report.sortedXml.soapLines[restBIndex].text).toBe('')
   })
 
@@ -99,6 +96,36 @@ describe('compareXml', () => {
     ).toBe(true)
   })
 
+  it('does not highlight REST values when the matched SOAP node is empty', () => {
+    const report = compareXml('<Invoice><memo></memo></Invoice>', '<Invoice><memo>REST-only value</memo></Invoice>', 'normalized', DEFAULT_RULES)
+    const restMemo = report.sortedXml.restLines.find((line) => line.text.includes('<memo>REST-only value</memo>'))
+    const soapMemo = report.sortedXml.soapLines.find((line) => line.text.includes('<memo></memo>'))
+
+    expect(soapMemo?.different).toBe(true)
+    expect(soapMemo?.highlight).toBeUndefined()
+    expect(restMemo?.different).toBe(true)
+    expect(restMemo?.highlight).toBeUndefined()
+    expect(restMemo?.valueDiffRanges).toBeUndefined()
+  })
+
+  it('marks only the REST value dark red when same node values differ', () => {
+    const report = compareXml('<Invoice><memo>SOAP</memo></Invoice>', '<Invoice><memo>REST</memo></Invoice>', 'normalized', DEFAULT_RULES)
+    const restMemo = report.sortedXml.restLines.find((line) => line.text.includes('<memo>REST</memo>'))
+    const soapMemo = report.sortedXml.soapLines.find((line) => line.text.includes('<memo>SOAP</memo>'))
+
+    expect(soapMemo?.highlight).toBeUndefined()
+    expect(soapMemo?.valueDiffRanges).toBeUndefined()
+    expect(restMemo?.highlight).toBe('critical')
+    expect(restMemo?.valueDiffRanges).toEqual([{ from: 8, to: 12 }])
+  })
+
+  it('shows sorted XML from the document root instead of silently skipping wrapper nodes', () => {
+    const report = compareXml(SOAP, REST, 'adaptive', DEFAULT_RULES)
+
+    expect(report.sortedXml.soap).toMatch(/^<TcBspFrameworkResponse>/)
+    expect(report.sortedXml.rest).toMatch(/^<Envelope>/)
+  })
+
   it('exports the sorted diff without the flat changed-entry table as an HTML report', () => {
     const report = compareXml('<Invoice><a>&amp;</a></Invoice>', '<Invoice><a>2</a></Invoice>', 'normalized', DEFAULT_RULES)
     const html = reportToHtml(report)
@@ -108,7 +135,10 @@ describe('compareXml', () => {
     expect(html).toContain('&amp;amp;')
     expect(html).toContain('Highlight legend')
     expect(html).toContain('Same node name with different case only')
+    expect(html).toContain('<h2>Match Quality</h2>')
+    expect(html).toContain('<th>Matched</th>')
     expect(html).not.toContain('Changed Entries')
+    expect(html).not.toContain('REST-only extra line')
   })
 
   it('exports CSV paths shifted into separate level columns', () => {
