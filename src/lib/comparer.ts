@@ -65,7 +65,13 @@ export interface XmlDiffLine {
   lineNumber: number
   text: string
   different: boolean
-  highlight?: 'original' | 'critical' | 'warning' | 'info'
+  highlight?: 'critical' | 'warning' | 'success' | 'info'
+  caseDiffRanges?: TextRange[]
+}
+
+export interface TextRange {
+  from: number
+  to: number
 }
 
 interface ValueRecord {
@@ -326,12 +332,14 @@ function buildLineDiff(
       text: line.soapText,
       different: line.type !== 'equal',
       highlight: line.soapHighlight,
+      caseDiffRanges: line.soapCaseDiffRanges,
     })),
     restLines: alignedLines.map((line, index) => ({
       lineNumber: index + 1,
       text: line.restText,
       different: line.type !== 'equal',
       highlight: line.restHighlight,
+      caseDiffRanges: line.restCaseDiffRanges,
     })),
   }
 }
@@ -347,6 +355,8 @@ interface AlignedDiffLine {
   restText: string
   soapHighlight?: XmlDiffLine['highlight']
   restHighlight?: XmlDiffLine['highlight']
+  soapCaseDiffRanges?: TextRange[]
+  restCaseDiffRanges?: TextRange[]
 }
 
 function alignLines(soapLines: string[], restLines: string[]): AlignedDiffLine[] {
@@ -474,11 +484,11 @@ function pairChangedLines(operations: RawDiffOperation[]): AlignedDiffLine[] {
     }
 
     deletes.forEach((soapText) => {
-      alignedLines.push({ type: 'missingFromRest', soapText, restText: '', soapHighlight: 'original', restHighlight: 'critical' })
+      alignedLines.push({ type: 'missingFromRest', soapText, restText: '', soapHighlight: 'critical', restHighlight: 'critical' })
     })
 
     inserts.forEach((restText) => {
-      alignedLines.push({ type: 'extraInRest', soapText: '', restText, soapHighlight: 'info', restHighlight: 'info' })
+      alignedLines.push({ type: 'extraInRest', soapText: '', restText, restHighlight: 'success' })
     })
   }
 
@@ -492,7 +502,7 @@ function alignChangedBlock(deletes: string[], inserts: string[]): AlignedDiffLin
 
   while (deleteIndex < deletes.length || insertIndex < inserts.length) {
     if (deleteIndex >= deletes.length) {
-      alignedLines.push({ type: 'extraInRest', soapText: '', restText: inserts[insertIndex], soapHighlight: 'info', restHighlight: 'info' })
+      alignedLines.push({ type: 'extraInRest', soapText: '', restText: inserts[insertIndex], restHighlight: 'success' })
       insertIndex += 1
       continue
     }
@@ -501,7 +511,7 @@ function alignChangedBlock(deletes: string[], inserts: string[]): AlignedDiffLin
         type: 'missingFromRest',
         soapText: deletes[deleteIndex],
         restText: '',
-        soapHighlight: 'original',
+        soapHighlight: 'critical',
         restHighlight: 'critical',
       })
       deleteIndex += 1
@@ -525,7 +535,7 @@ function alignChangedBlock(deletes: string[], inserts: string[]): AlignedDiffLin
       : -1
 
     if (nextInsertMatch !== -1 && (nextDeleteMatch === -1 || nextInsertMatch <= nextDeleteMatch)) {
-      alignedLines.push({ type: 'extraInRest', soapText: '', restText: inserts[insertIndex], soapHighlight: 'info', restHighlight: 'info' })
+      alignedLines.push({ type: 'extraInRest', soapText: '', restText: inserts[insertIndex], restHighlight: 'success' })
       insertIndex += 1
       continue
     }
@@ -535,7 +545,7 @@ function alignChangedBlock(deletes: string[], inserts: string[]): AlignedDiffLin
         type: 'missingFromRest',
         soapText: deletes[deleteIndex],
         restText: '',
-        soapHighlight: 'original',
+        soapHighlight: 'critical',
         restHighlight: 'critical',
       })
       deleteIndex += 1
@@ -546,11 +556,11 @@ function alignChangedBlock(deletes: string[], inserts: string[]): AlignedDiffLin
       type: 'missingFromRest',
       soapText: deletes[deleteIndex],
       restText: '',
-      soapHighlight: 'original',
+      soapHighlight: 'critical',
       restHighlight: 'critical',
     })
     alignedLines.push({ type: 'equal', soapText: '', restText: '' })
-    alignedLines.push({ type: 'extraInRest', soapText: '', restText: inserts[insertIndex], soapHighlight: 'info', restHighlight: 'info' })
+    alignedLines.push({ type: 'extraInRest', soapText: '', restText: inserts[insertIndex], restHighlight: 'success' })
     deleteIndex += 1
     insertIndex += 1
   }
@@ -564,10 +574,44 @@ function pairSameNodeLine(soapText: string, restText: string): AlignedDiffLine {
   }
 
   if (soapText.toLowerCase() === restText.toLowerCase()) {
-    return { type: 'changed', soapText, restText, soapHighlight: 'warning', restHighlight: 'warning' }
+    const ranges = buildCaseDiffRanges(soapText, restText)
+    return {
+      type: 'changed',
+      soapText,
+      restText,
+      soapHighlight: 'warning',
+      restHighlight: 'warning',
+      soapCaseDiffRanges: ranges,
+      restCaseDiffRanges: ranges,
+    }
   }
 
-  return { type: 'changed', soapText, restText, soapHighlight: 'original', restHighlight: 'critical' }
+  return { type: 'changed', soapText, restText, soapHighlight: 'critical', restHighlight: 'critical' }
+}
+
+function buildCaseDiffRanges(soapText: string, restText: string): TextRange[] {
+  const ranges: TextRange[] = []
+  let activeStart: number | null = null
+
+  for (let index = 0; index < soapText.length; index += 1) {
+    const isCaseDiff =
+      soapText[index] !== restText[index] && soapText[index].toLowerCase() === restText[index].toLowerCase()
+
+    if (isCaseDiff && activeStart === null) {
+      activeStart = index
+    }
+
+    if (!isCaseDiff && activeStart !== null) {
+      ranges.push({ from: activeStart, to: index })
+      activeStart = null
+    }
+  }
+
+  if (activeStart !== null) {
+    ranges.push({ from: activeStart, to: soapText.length })
+  }
+
+  return ranges
 }
 
 function lineSignature(value: string): string | null {
@@ -581,20 +625,6 @@ function lineSignature(value: string): string | null {
 }
 
 export function reportToHtml(report: CompareReport): string {
-  const changedRows = report.entries
-    .filter((entry) => entry.status !== 'exactMatch')
-    .map(
-      (entry) => `<tr>
-        <td>${escapeHtml(entry.severity)}</td>
-        <td>${escapeHtml(entry.status)}</td>
-        <td>${escapeHtml(entry.canonicalPath)}</td>
-        <td>${escapeHtml(entry.soapValue ?? '')}</td>
-        <td>${escapeHtml(entry.restValue ?? '')}</td>
-        <td>${escapeHtml(entry.note)}</td>
-      </tr>`,
-    )
-    .join('')
-
   return `<!doctype html>
 <html lang="en">
 <head>
@@ -610,12 +640,11 @@ export function reportToHtml(report: CompareReport): string {
     .diff-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 1rem; }
     pre { margin: 0; padding: .75rem; overflow: auto; line-height: 1.4; background: #fff; }
     .line { display: block; min-height: 1.4em; white-space: pre; }
-    .original { background: #e8f7ec; border-left: 3px solid #218838; }
     .critical { background: #fde7e9; border-left: 3px solid #c82333; }
     .warning { background: #fff3cd; border-left: 3px solid #d39e00; }
+    .success { background: #e8f7ec; border-left: 3px solid #218838; }
     .info { background: #e7f1ff; border-left: 3px solid #0b5ed7; }
-    table { width: 100%; border-collapse: collapse; margin-top: 1rem; font-size: .9rem; }
-    th, td { border: 1px solid #ddd; padding: .35rem; text-align: left; vertical-align: top; }
+    .case-char { background: #d39e00; color: #1f1f1f; font-weight: 700; }
     @media (max-width: 960px) { .diff-grid { grid-template-columns: 1fr; } }
   </style>
 </head>
@@ -632,10 +661,9 @@ export function reportToHtml(report: CompareReport): string {
     <div>Compatibility score: ${report.summary.compatibilityScore}%</div>
   </section>
   <section class="legend" aria-label="Highlight legend">
-    <span class="original">SOAP-only or original changed line</span>
     <span class="critical">REST differs from SOAP or SOAP line is missing</span>
     <span class="warning">Same node name with different case only</span>
-    <span class="info">REST-only extra line</span>
+    <span class="success">REST-only extra line</span>
   </section>
   <section class="diff-grid">
     <article>
@@ -647,13 +675,6 @@ export function reportToHtml(report: CompareReport): string {
       <pre>${linesToHtml(report.sortedXml.restLines)}</pre>
     </article>
   </section>
-  <h2>Changed Entries</h2>
-  <table>
-    <thead>
-      <tr><th>Severity</th><th>Status</th><th>Canonical Path</th><th>SOAP Value</th><th>REST Value</th><th>Note</th></tr>
-    </thead>
-    <tbody>${changedRows || '<tr><td colspan="6">No differences</td></tr>'}</tbody>
-  </table>
 </body>
 </html>`
 }
@@ -662,9 +683,26 @@ function linesToHtml(lines: XmlDiffLine[]): string {
   return lines
     .map((line) => {
       const className = line.highlight ? `line ${line.highlight}` : 'line'
-      return `<span class="${className}">${escapeHtml(line.text)}</span>`
+      return `<span class="${className}">${lineTextToHtml(line)}</span>`
     })
     .join('\n')
+}
+
+function lineTextToHtml(line: XmlDiffLine): string {
+  const ranges = line.caseDiffRanges ?? []
+  if (ranges.length === 0) {
+    return escapeHtml(line.text)
+  }
+
+  let html = ''
+  let index = 0
+  for (const range of ranges) {
+    html += escapeHtml(line.text.slice(index, range.from))
+    html += `<span class="case-char">${escapeHtml(line.text.slice(range.from, range.to))}</span>`
+    index = range.to
+  }
+  html += escapeHtml(line.text.slice(index))
+  return html
 }
 
 function escapeHtml(value: string): string {
@@ -1055,21 +1093,24 @@ function isIgnoredPath(path: string, ignorePaths: string[]): boolean {
 }
 
 export function entriesToCsv(entries: CompareEntry[]): string {
+  const pathLevels = entries.map((entry) => pathToLevels(entry.canonicalPath))
+  const maxPathDepth = Math.max(1, ...pathLevels.map((levels) => levels.length))
   const header = [
     'severity',
     'status',
-    'canonicalPath',
+    ...Array.from({ length: maxPathDepth }, (_, index) => `pathLevel${index + 1}`),
     'soapPath',
     'restPath',
     'soapValue',
     'restValue',
     'note',
   ]
-  const rows = entries.map((entry) =>
-    [
+  const rows = entries.map((entry, index) => {
+    const levels = pathLevels[index]
+    return [
       entry.severity,
       entry.status,
-      entry.canonicalPath,
+      ...Array.from({ length: maxPathDepth }, (_, levelIndex) => levels[levelIndex] ?? ''),
       entry.soapPath ?? '',
       entry.restPath ?? '',
       entry.soapValue ?? '',
@@ -1077,10 +1118,14 @@ export function entriesToCsv(entries: CompareEntry[]): string {
       entry.note,
     ]
       .map((cell) => `"${String(cell).replaceAll('"', '""')}"`)
-      .join(','),
-  )
+      .join(',')
+  })
 
   return [header.join(','), ...rows].join('\n')
+}
+
+function pathToLevels(path: string): string[] {
+  return path.split('.').filter(Boolean)
 }
 
 export function downloadText(filename: string, text: string, mimeType: string) {

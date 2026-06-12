@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { compareXml, DEFAULT_RULES, reportToHtml } from './comparer'
+import { compareXml, DEFAULT_RULES, entriesToCsv, reportToHtml } from './comparer'
 
 const SOAP = `<TcBspFrameworkResponse><ResponseData><Transaction><TransactionData><Invoice><subTotal>10.00</subTotal><billingAddress><phone>(815) 389-3606</phone></billingAddress><itemList><item><line>1</line><item>SKU-A</item><amount>10</amount></item></itemList></Invoice></TransactionData></Transaction></ResponseData></TcBspFrameworkResponse>`
 const REST = `<Envelope><Invoice><subtotal>10</subtotal><billingAddress><addrPhone>+1 815-389-3606</addrPhone></billingAddress><itemList><item><line>1</line><item>SKU-A</item><tcDiscountItem><item><amount>10.00</amount></item></tcDiscountItem></item></itemList></Invoice></Envelope>`
@@ -41,10 +41,8 @@ describe('compareXml', () => {
     const report = compareXml(soap, rest, 'normalized', DEFAULT_RULES)
 
     expect(report.sortedXml.soapLines).toHaveLength(report.sortedXml.restLines.length)
-    expect(report.sortedXml.soapLines.some((line) => line.different && line.text === '' && line.highlight === 'info')).toBe(
-      true,
-    )
-    expect(report.sortedXml.restLines.some((line) => line.text.includes('<b>2</b>') && line.highlight === 'info')).toBe(
+    expect(report.sortedXml.soapLines.some((line) => line.different && line.text === '' && !line.highlight)).toBe(true)
+    expect(report.sortedXml.restLines.some((line) => line.text.includes('<b>2</b>') && line.highlight === 'success')).toBe(
       true,
     )
   })
@@ -64,10 +62,10 @@ describe('compareXml', () => {
     expect(
       report.sortedXml.soapLines.some((line, index) => line.text.includes('<a>') && report.sortedXml.restLines[index].text),
     ).toBe(false)
-    expect(report.sortedXml.soapLines.some((line) => line.text.includes('<a>1</a>') && line.highlight === 'original')).toBe(
+    expect(report.sortedXml.soapLines.some((line) => line.text.includes('<a>1</a>') && line.highlight === 'critical')).toBe(
       true,
     )
-    expect(report.sortedXml.restLines.some((line) => line.text.includes('<b>1</b>') && line.highlight === 'info')).toBe(
+    expect(report.sortedXml.restLines.some((line) => line.text.includes('<b>1</b>') && line.highlight === 'success')).toBe(
       true,
     )
   })
@@ -80,7 +78,7 @@ describe('compareXml', () => {
     const restBIndex = report.sortedXml.restLines.findIndex((line) => line.text.includes('<b>extra</b>'))
 
     expect(report.sortedXml.restLines[soapCIndex].text).toContain('<c>3</c>')
-    expect(report.sortedXml.soapLines[soapCIndex].highlight).toBe('original')
+    expect(report.sortedXml.soapLines[soapCIndex].highlight).toBe('critical')
     expect(report.sortedXml.restLines[soapCIndex].highlight).toBe('critical')
     expect(report.sortedXml.soapLines[restBIndex].text).toBe('')
   })
@@ -94,9 +92,14 @@ describe('compareXml', () => {
     expect(report.sortedXml.restLines.some((line) => line.text.includes('<subtotal>10</subtotal>') && line.highlight === 'warning')).toBe(
       true,
     )
+    expect(
+      report.sortedXml.soapLines.some(
+        (line) => line.text.includes('<subTotal>10</subTotal>') && line.caseDiffRanges?.length,
+      ),
+    ).toBe(true)
   })
 
-  it('exports the CodeMirror-style sorted diff as an HTML report', () => {
+  it('exports the sorted diff without the flat changed-entry table as an HTML report', () => {
     const report = compareXml('<Invoice><a>&amp;</a></Invoice>', '<Invoice><a>2</a></Invoice>', 'normalized', DEFAULT_RULES)
     const html = reportToHtml(report)
 
@@ -105,6 +108,24 @@ describe('compareXml', () => {
     expect(html).toContain('&amp;amp;')
     expect(html).toContain('Highlight legend')
     expect(html).toContain('Same node name with different case only')
-    expect(html).toContain('Changed Entries')
+    expect(html).not.toContain('Changed Entries')
+  })
+
+  it('exports CSV paths shifted into separate level columns', () => {
+    const csv = entriesToCsv([
+      {
+        severity: 'critical',
+        status: 'valueMismatch',
+        canonicalPath: 'invoice.itemlist.item.amount',
+        soapPath: 'Invoice.itemList.item.amount',
+        restPath: 'Invoice.itemList.item.amount',
+        soapValue: '10',
+        restValue: '12',
+        note: 'Business value mismatch after normalization',
+      },
+    ])
+
+    expect(csv.split('\n')[0]).toContain('pathLevel1,pathLevel2,pathLevel3,pathLevel4')
+    expect(csv).toContain('"invoice","itemlist","item","amount"')
   })
 })
