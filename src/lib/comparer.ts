@@ -65,8 +65,9 @@ export interface XmlDiffLine {
   lineNumber: number
   text: string
   different: boolean
-  highlight?: 'critical' | 'warning' | 'success' | 'info'
+  highlight?: 'critical' | 'warning' | 'info'
   caseDiffRanges?: TextRange[]
+  valueDiffRanges?: TextRange[]
 }
 
 export interface TextRange {
@@ -178,8 +179,8 @@ export function compareXml(
 
   const soapRoot = findBusinessRoot(soapDoc)
   const restRoot = findBusinessRoot(restDoc)
-  const sortedSoapXml = serializeSortedXml(soapRoot)
-  const sortedRestXml = serializeSortedXml(restRoot)
+  const sortedSoapXml = serializeSortedXml(soapDoc.documentElement)
+  const sortedRestXml = serializeSortedXml(restDoc.documentElement)
 
   const soapRecords = flatten(soapRoot, 'Invoice', mode === 'adaptive', rules)
   const restRecords = flatten(restRoot, 'Invoice', mode === 'adaptive', rules)
@@ -333,6 +334,7 @@ function buildLineDiff(
       different: line.type !== 'equal',
       highlight: line.soapHighlight,
       caseDiffRanges: line.soapCaseDiffRanges,
+      valueDiffRanges: line.soapValueDiffRanges,
     })),
     restLines: alignedLines.map((line, index) => ({
       lineNumber: index + 1,
@@ -340,6 +342,7 @@ function buildLineDiff(
       different: line.type !== 'equal',
       highlight: line.restHighlight,
       caseDiffRanges: line.restCaseDiffRanges,
+      valueDiffRanges: line.restValueDiffRanges,
     })),
   }
 }
@@ -357,6 +360,8 @@ interface AlignedDiffLine {
   restHighlight?: XmlDiffLine['highlight']
   soapCaseDiffRanges?: TextRange[]
   restCaseDiffRanges?: TextRange[]
+  soapValueDiffRanges?: TextRange[]
+  restValueDiffRanges?: TextRange[]
 }
 
 function alignLines(soapLines: string[], restLines: string[]): AlignedDiffLine[] {
@@ -488,7 +493,7 @@ function pairChangedLines(operations: RawDiffOperation[]): AlignedDiffLine[] {
     })
 
     inserts.forEach((restText) => {
-      alignedLines.push({ type: 'extraInRest', soapText: '', restText, restHighlight: 'success' })
+      alignedLines.push({ type: 'extraInRest', soapText: '', restText })
     })
   }
 
@@ -502,7 +507,7 @@ function alignChangedBlock(deletes: string[], inserts: string[]): AlignedDiffLin
 
   while (deleteIndex < deletes.length || insertIndex < inserts.length) {
     if (deleteIndex >= deletes.length) {
-      alignedLines.push({ type: 'extraInRest', soapText: '', restText: inserts[insertIndex], restHighlight: 'success' })
+      alignedLines.push({ type: 'extraInRest', soapText: '', restText: inserts[insertIndex] })
       insertIndex += 1
       continue
     }
@@ -535,7 +540,7 @@ function alignChangedBlock(deletes: string[], inserts: string[]): AlignedDiffLin
       : -1
 
     if (nextInsertMatch !== -1 && (nextDeleteMatch === -1 || nextInsertMatch <= nextDeleteMatch)) {
-      alignedLines.push({ type: 'extraInRest', soapText: '', restText: inserts[insertIndex], restHighlight: 'success' })
+      alignedLines.push({ type: 'extraInRest', soapText: '', restText: inserts[insertIndex] })
       insertIndex += 1
       continue
     }
@@ -560,7 +565,7 @@ function alignChangedBlock(deletes: string[], inserts: string[]): AlignedDiffLin
       restHighlight: 'critical',
     })
     alignedLines.push({ type: 'equal', soapText: '', restText: '' })
-    alignedLines.push({ type: 'extraInRest', soapText: '', restText: inserts[insertIndex], restHighlight: 'success' })
+    alignedLines.push({ type: 'extraInRest', soapText: '', restText: inserts[insertIndex] })
     deleteIndex += 1
     insertIndex += 1
   }
@@ -571,6 +576,24 @@ function alignChangedBlock(deletes: string[], inserts: string[]): AlignedDiffLin
 function pairSameNodeLine(soapText: string, restText: string): AlignedDiffLine {
   if (soapText === restText) {
     return { type: 'equal', soapText, restText }
+  }
+
+  const soapLeaf = parseLeafLine(soapText)
+  const restLeaf = parseLeafLine(restText)
+  if (soapLeaf && restLeaf && soapLeaf.tag.toLowerCase() === restLeaf.tag.toLowerCase()) {
+    if (soapLeaf.value.trim() === '' && restLeaf.value.trim() !== '') {
+      return { type: 'changed', soapText, restText }
+    }
+
+    if (soapLeaf.value !== restLeaf.value) {
+      return {
+        type: 'changed',
+        soapText,
+        restText,
+        restHighlight: 'critical',
+        restValueDiffRanges: [restLeaf.valueRange],
+      }
+    }
   }
 
   if (soapText.toLowerCase() === restText.toLowerCase()) {
@@ -587,6 +610,21 @@ function pairSameNodeLine(soapText: string, restText: string): AlignedDiffLine {
   }
 
   return { type: 'changed', soapText, restText, soapHighlight: 'critical', restHighlight: 'critical' }
+}
+
+function parseLeafLine(text: string): { tag: string; value: string; valueRange: TextRange } | null {
+  const match = text.match(/^(\s*<([A-Za-z_][\w:.-]*)(?:\s+[^>]*)?>)(.*)(<\/\2>)$/)
+  if (!match) return null
+
+  const [, openingTag, tag, value] = match
+  return {
+    tag,
+    value,
+    valueRange: {
+      from: openingTag.length,
+      to: openingTag.length + value.length,
+    },
+  }
 }
 
 function buildCaseDiffRanges(soapText: string, restText: string): TextRange[] {
@@ -631,20 +669,25 @@ export function reportToHtml(report: CompareReport): string {
   <meta charset="utf-8">
   <title>XML Compare Report</title>
   <style>
-    body { font-family: Arial, sans-serif; margin: 1rem; color: #1f1f1f; }
-    .summary { display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: .4rem; margin: .75rem 0 1rem; }
-    .summary div, pre, table { border: 1px solid #ddd; }
-    .summary div { padding: .4rem; background: #fafafa; }
+    body { font-family: Arial, sans-serif; margin: 1rem; color: #1f1f1f; font-size: 18px; }
+    .summary { display: grid; grid-template-columns: repeat(auto-fit, minmax(360px, 1fr)); gap: 1rem; margin: .75rem 0 1rem; }
+    .summary-card, pre, table { border: 1px solid #ddd; }
+    .summary-card { border-radius: 8px; overflow: hidden; background: #fff; box-shadow: 0 1px 3px rgb(0 0 0 / 8%); }
+    .summary-card h2 { margin: 0; padding: .65rem .8rem; background: #f4f7fb; border-bottom: 1px solid #ddd; font-size: 1.05rem; }
+    table { width: 100%; border-collapse: collapse; font-size: 1rem; }
+    th, td { border: 1px solid #e2e2e2; padding: .55rem .65rem; text-align: left; }
+    th { width: 62%; background: #fbfbfb; color: #444; font-weight: 600; }
+    td { font-weight: 700; }
     .legend { display: flex; flex-wrap: wrap; gap: .5rem; margin: .75rem 0 1rem; }
     .legend span { border: 1px solid #ddd; border-left-width: 3px; padding: .3rem .45rem; }
     .diff-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 1rem; }
-    pre { margin: 0; padding: .75rem; overflow: auto; line-height: 1.4; background: #fff; }
+    pre { margin: 0; padding: .75rem; overflow: auto; line-height: 1.5; background: #fff; font-size: 1.05rem; }
     .line { display: block; min-height: 1.4em; white-space: pre; }
     .critical { background: #fde7e9; border-left: 3px solid #c82333; }
     .warning { background: #fff3cd; border-left: 3px solid #d39e00; }
-    .success { background: #e8f7ec; border-left: 3px solid #218838; }
     .info { background: #e7f1ff; border-left: 3px solid #0b5ed7; }
     .case-char { background: #d39e00; color: #1f1f1f; font-weight: 700; }
+    .value-char { background: #8b0000; color: #fff; font-weight: 700; }
     @media (max-width: 960px) { .diff-grid { grid-template-columns: 1fr; } }
   </style>
 </head>
@@ -652,18 +695,31 @@ export function reportToHtml(report: CompareReport): string {
   <h1>XML Compare Report</h1>
   <p>Mode: ${escapeHtml(report.mode)}</p>
   <section class="summary">
-    <div>Matched: ${report.summary.matched}</div>
-    <div>Normalized/Warnings: ${report.summary.normalizedWarnings}</div>
-    <div>Value differences: ${report.summary.valueDifferences}</div>
-    <div>Missing from REST: ${report.summary.missingFromCandidate}</div>
-    <div>Extra in REST: ${report.summary.extraInCandidate}</div>
-    <div>Structural/adaptive matches: ${report.summary.structuralMatches}</div>
-    <div>Compatibility score: ${report.summary.compatibilityScore}%</div>
+    <div class="summary-card">
+      <h2>Match Quality</h2>
+      <table>
+        <tbody>
+          <tr><th>Matched</th><td>${report.summary.matched}</td></tr>
+          <tr><th>Normalized/Warnings</th><td>${report.summary.normalizedWarnings}</td></tr>
+          <tr><th>Structural/adaptive matches</th><td>${report.summary.structuralMatches}</td></tr>
+          <tr><th>Compatibility score</th><td>${report.summary.compatibilityScore}%</td></tr>
+        </tbody>
+      </table>
+    </div>
+    <div class="summary-card">
+      <h2>Differences</h2>
+      <table>
+        <tbody>
+          <tr><th>Value differences</th><td>${report.summary.valueDifferences}</td></tr>
+          <tr><th>Missing from REST</th><td>${report.summary.missingFromCandidate}</td></tr>
+          <tr><th>Extra in REST</th><td>${report.summary.extraInCandidate}</td></tr>
+        </tbody>
+      </table>
+    </div>
   </section>
   <section class="legend" aria-label="Highlight legend">
     <span class="critical">REST differs from SOAP or SOAP line is missing</span>
     <span class="warning">Same node name with different case only</span>
-    <span class="success">REST-only extra line</span>
   </section>
   <section class="diff-grid">
     <article>
@@ -689,7 +745,10 @@ function linesToHtml(lines: XmlDiffLine[]): string {
 }
 
 function lineTextToHtml(line: XmlDiffLine): string {
-  const ranges = line.caseDiffRanges ?? []
+  const ranges = [
+    ...(line.caseDiffRanges ?? []).map((range) => ({ ...range, className: 'case-char' })),
+    ...(line.valueDiffRanges ?? []).map((range) => ({ ...range, className: 'value-char' })),
+  ].sort((a, b) => a.from - b.from)
   if (ranges.length === 0) {
     return escapeHtml(line.text)
   }
@@ -698,7 +757,7 @@ function lineTextToHtml(line: XmlDiffLine): string {
   let index = 0
   for (const range of ranges) {
     html += escapeHtml(line.text.slice(index, range.from))
-    html += `<span class="case-char">${escapeHtml(line.text.slice(range.from, range.to))}</span>`
+    html += `<span class="${range.className}">${escapeHtml(line.text.slice(range.from, range.to))}</span>`
     index = range.to
   }
   html += escapeHtml(line.text.slice(index))

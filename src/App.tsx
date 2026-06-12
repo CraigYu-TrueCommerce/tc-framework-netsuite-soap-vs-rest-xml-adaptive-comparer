@@ -87,11 +87,6 @@ function App() {
     setError('')
   }
 
-  const onExportJson = () => {
-    if (!report) return
-    downloadText('xml-compare-report.json', JSON.stringify(report, null, 2), 'application/json')
-  }
-
   const onExportCsv = () => {
     if (!report) return
     downloadText('xml-compare-report.csv', entriesToCsv(report.entries), 'text/csv')
@@ -157,21 +152,28 @@ function App() {
         <section>
           <h2>Report</h2>
           <div className="summary-grid">
-            <div>Matched: {report.summary.matched}</div>
-            <div>Normalized/Warnings: {report.summary.normalizedWarnings}</div>
-            <div>Value differences: {report.summary.valueDifferences}</div>
-            <div>Missing from REST: {report.summary.missingFromCandidate}</div>
-            <div>Extra in REST: {report.summary.extraInCandidate}</div>
-            <div>Structural/adaptive matches: {report.summary.structuralMatches}</div>
-            <div>Compatibility score: {report.summary.compatibilityScore}%</div>
+            <SummaryTable
+              title="Match Quality"
+              rows={[
+                ['Matched', report.summary.matched],
+                ['Normalized/Warnings', report.summary.normalizedWarnings],
+                ['Structural/adaptive matches', report.summary.structuralMatches],
+                ['Compatibility score', `${report.summary.compatibilityScore}%`],
+              ]}
+            />
+            <SummaryTable
+              title="Differences"
+              rows={[
+                ['Value differences', report.summary.valueDifferences],
+                ['Missing from REST', report.summary.missingFromCandidate],
+                ['Extra in REST', report.summary.extraInCandidate],
+              ]}
+            />
           </div>
 
           <div className="filters">
             <button type="button" onClick={onExportHtml}>
               Export HTML
-            </button>
-            <button type="button" onClick={onExportJson}>
-              Export JSON
             </button>
             <button type="button" onClick={onExportCsv}>
               Export CSV
@@ -180,8 +182,8 @@ function App() {
 
           <h3>Sorted XML Difference View</h3>
           <p className="muted">
-            Each XML tree is shown from its detected business root, with attributes and same-level child nodes sorted
-            alphabetically before comparison. Blank lines align same-level nodes where one side has extra content.
+            Each XML tree is shown from its document root, with attributes and same-level child nodes sorted alphabetically
+            before comparison. Blank lines align same-level nodes where one side has extra content.
           </p>
           <HighlightLegend />
           <div className="xml-diff-grid">
@@ -214,10 +216,27 @@ function App() {
 function HighlightLegend() {
   return (
     <div className="highlight-legend" aria-label="Highlight legend">
-      <span className="legend-critical">REST differs from SOAP or SOAP line is missing</span>
+      <span className="legend-critical">REST value differs from SOAP or SOAP line is missing</span>
       <span className="legend-warning">Same node name with different case only</span>
-      <span className="legend-success">REST-only extra line</span>
     </div>
+  )
+}
+
+function SummaryTable({ title, rows }: { title: string; rows: [string, string | number][] }) {
+  return (
+    <article className="summary-card">
+      <h3>{title}</h3>
+      <table>
+        <tbody>
+          {rows.map(([label, value]) => (
+            <tr key={label}>
+              <th scope="row">{label}</th>
+              <td>{value}</td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
+    </article>
   )
 }
 
@@ -298,18 +317,23 @@ function xmlLineHighlightExtension(lines: XmlDiffLine[]) {
       .filter((line) => line.caseDiffRanges?.length)
       .map((line) => [line.lineNumber, line.caseDiffRanges ?? []]),
   )
+  const valueDiffRanges = new Map(
+    lines
+      .filter((line) => line.valueDiffRanges?.length)
+      .map((line) => [line.lineNumber, line.valueDiffRanges ?? []]),
+  )
 
   return ViewPlugin.fromClass(
     class {
       decorations: DecorationSet
 
       constructor(view: EditorView) {
-        this.decorations = buildLineDecorations(view, lineClasses, caseDiffRanges)
+        this.decorations = buildLineDecorations(view, lineClasses, caseDiffRanges, valueDiffRanges)
       }
 
       update(update: ViewUpdate) {
         if (update.docChanged || update.viewportChanged) {
-          this.decorations = buildLineDecorations(update.view, lineClasses, caseDiffRanges)
+          this.decorations = buildLineDecorations(update.view, lineClasses, caseDiffRanges, valueDiffRanges)
         }
       }
     },
@@ -323,6 +347,7 @@ function buildLineDecorations(
   view: EditorView,
   lineClasses: Map<number, string>,
   caseDiffRanges: Map<number, NonNullable<XmlDiffLine['caseDiffRanges']>>,
+  valueDiffRanges: Map<number, NonNullable<XmlDiffLine['valueDiffRanges']>>,
 ): DecorationSet {
   const lineDecorations = [...lineClasses.entries()]
     .filter(([lineNumber]) => lineNumber <= view.state.doc.lines)
@@ -337,7 +362,16 @@ function buildLineDecorations(
     )
   })
 
-  return Decoration.set([...lineDecorations, ...characterDecorations], true)
+  const valueDecorations = [...valueDiffRanges.entries()].flatMap(([lineNumber, ranges]) => {
+    if (lineNumber > view.state.doc.lines) return []
+
+    const line = view.state.doc.line(lineNumber)
+    return ranges.map((range) =>
+      Decoration.mark({ class: 'cm-diff-value-char' }).range(line.from + range.from, line.from + range.to),
+    )
+  })
+
+  return Decoration.set([...lineDecorations, ...characterDecorations, ...valueDecorations], true)
 }
 
 export default App
