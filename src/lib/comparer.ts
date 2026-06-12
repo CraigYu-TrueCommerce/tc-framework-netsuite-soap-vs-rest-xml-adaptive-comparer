@@ -52,7 +52,19 @@ export interface CompareReport {
     structuralMatches: number
     compatibilityScore: number
   }
+  sortedXml: {
+    soap: string
+    rest: string
+    soapLines: XmlDiffLine[]
+    restLines: XmlDiffLine[]
+  }
   entries: CompareEntry[]
+}
+
+export interface XmlDiffLine {
+  lineNumber: number
+  text: string
+  different: boolean
 }
 
 interface ValueRecord {
@@ -66,26 +78,11 @@ interface NormalizedValue {
 }
 
 export const DEFAULT_RULES: RulesConfig = {
-  pathAliases: {
-    'invoice.subtotal': 'invoice.subTotal',
-    'invoice.transactionbilladdress.billaddrphone': 'invoice.transactionbilladdress.billPhone',
-    'invoice.billingaddress.addrphone': 'invoice.billingaddress.phone',
-    'invoice.transactionshipaddress.shipaddrphone': 'invoice.transactionshipaddress.shipPhone',
-    'invoice.shippingaddress.addrphone': 'invoice.shippingaddress.phone',
-  },
-  valueAliases: {
-    _unitedstates: 'United States',
-    USA: 'United States',
-  },
+  pathAliases: {},
+  valueAliases: {},
   ignorePaths: [],
-  collectionMatchRules: [
-    { path: 'invoice.itemlist.item', matchBy: ['line', 'internalid', 'item', 'orderline'] },
-    { path: 'invoice.shipgrouplist.shipgroup', matchBy: ['id'] },
-    { path: 'invoice.taxlist.tax', matchBy: ['taxcode', 'taxrate'] },
-  ],
-  nestedPathAliases: {
-    'invoice.itemlist.item.tcdiscountitem.item': 'invoice.itemlist.item',
-  },
+  collectionMatchRules: [],
+  nestedPathAliases: {},
   normalizers: {
     trimWhitespace: true,
     collapseWhitespace: true,
@@ -174,6 +171,8 @@ export function compareXml(
 
   const soapRoot = findBusinessRoot(soapDoc)
   const restRoot = findBusinessRoot(restDoc)
+  const sortedSoapXml = serializeSortedXml(soapRoot)
+  const sortedRestXml = serializeSortedXml(restRoot)
 
   const soapRecords = flatten(soapRoot, 'Invoice', mode === 'adaptive', rules)
   const restRecords = flatten(restRoot, 'Invoice', mode === 'adaptive', rules)
@@ -229,7 +228,16 @@ export function compareXml(
   }
 
   const summary = buildSummary(entries)
-  return { mode, entries, summary }
+  return {
+    mode,
+    entries,
+    summary,
+    sortedXml: {
+      soap: sortedSoapXml,
+      rest: sortedRestXml,
+      ...buildLineDiff(sortedSoapXml, sortedRestXml),
+    },
+  }
 }
 
 
@@ -242,6 +250,74 @@ function parseXml(xml: string): Document {
     throw new Error(`Invalid XML: ${parseError.textContent ?? 'unknown parser error'}`)
   }
   return doc
+}
+
+function serializeSortedXml(element: Element): string {
+  return serializeElement(element, 0)
+}
+
+function serializeElement(element: Element, depth: number): string {
+  const indent = '  '.repeat(depth)
+  const attributes = [...element.attributes]
+    .sort((a, b) => a.name.localeCompare(b.name))
+    .map((attribute) => `${attribute.name}="${escapeXml(attribute.value)}"`)
+    .join(' ')
+  const openTag = attributes ? `<${element.tagName} ${attributes}>` : `<${element.tagName}>`
+  const childElements = [...element.children] as Element[]
+
+  if (childElements.length === 0) {
+    return `${indent}${openTag}${escapeXml((element.textContent ?? '').trim())}</${element.tagName}>`
+  }
+
+  const sortedChildren = childElements.sort((a, b) => {
+    const tagCompare = a.tagName.localeCompare(b.tagName)
+    if (tagCompare !== 0) return tagCompare
+    return sortableElementText(a).localeCompare(sortableElementText(b))
+  })
+  const children = sortedChildren.map((child) => serializeElement(child, depth + 1)).join('\n')
+
+  return `${indent}${openTag}\n${children}\n${indent}</${element.tagName}>`
+}
+
+function sortableElementText(element: Element): string {
+  return `${element.tagName}\u0000${[...element.attributes]
+    .sort((a, b) => a.name.localeCompare(b.name))
+    .map((attribute) => `${attribute.name}=${attribute.value}`)
+    .join('\u0000')}\u0000${(element.textContent ?? '').trim()}`
+}
+
+function escapeXml(value: string): string {
+  return value
+    .replaceAll('&', '&amp;')
+    .replaceAll('<', '&lt;')
+    .replaceAll('>', '&gt;')
+    .replaceAll('"', '&quot;')
+    .replaceAll("'", '&apos;')
+}
+
+function buildLineDiff(
+  soapXml: string,
+  restXml: string,
+): {
+  soapLines: XmlDiffLine[]
+  restLines: XmlDiffLine[]
+} {
+  const soapLines = soapXml.split('\n')
+  const restLines = restXml.split('\n')
+  const maxLines = Math.max(soapLines.length, restLines.length)
+
+  return {
+    soapLines: Array.from({ length: maxLines }, (_, index) => ({
+      lineNumber: index + 1,
+      text: soapLines[index] ?? '',
+      different: (soapLines[index] ?? '') !== (restLines[index] ?? ''),
+    })),
+    restLines: Array.from({ length: maxLines }, (_, index) => ({
+      lineNumber: index + 1,
+      text: restLines[index] ?? '',
+      different: (soapLines[index] ?? '') !== (restLines[index] ?? ''),
+    })),
+  }
 }
 
 function findBusinessRoot(doc: Document): Element {

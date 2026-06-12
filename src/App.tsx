@@ -1,4 +1,6 @@
 import { useMemo, useState, type ChangeEvent } from 'react'
+import CodeMirror from '@uiw/react-codemirror'
+import { xml } from '@codemirror/lang-xml'
 import './App.css'
 import {
   compareXml,
@@ -8,7 +10,6 @@ import {
   INVOICE_SAMPLE_REST,
   INVOICE_SAMPLE_SOAP,
   type CompareMode,
-  type RulesConfig,
 } from './lib/comparer'
 
 const MODE_OPTIONS: CompareMode[] = ['strict', 'normalized', 'adaptive']
@@ -17,12 +18,12 @@ function App() {
   const [soapXml, setSoapXml] = useState('')
   const [restXml, setRestXml] = useState('')
   const [mode, setMode] = useState<CompareMode>('adaptive')
-  const [rulesText, setRulesText] = useState(JSON.stringify(DEFAULT_RULES, null, 2))
   const [search, setSearch] = useState('')
   const [severityFilter, setSeverityFilter] = useState<'all' | 'critical' | 'warning' | 'info'>('all')
   const [statusFilter, setStatusFilter] = useState('all')
   const [error, setError] = useState('')
   const [report, setReport] = useState<ReturnType<typeof compareXml> | null>(null)
+  const xmlExtensions = useMemo(() => [xml()], [])
 
   const statuses = useMemo(
     () => ['all', ...(report ? [...new Set(report.entries.map((e) => e.status))] : [])],
@@ -55,15 +56,6 @@ function App() {
       setter(text)
     }
 
-  const parseRules = (): RulesConfig | null => {
-    try {
-      return JSON.parse(rulesText) as RulesConfig
-    } catch {
-      setError('Rules JSON is invalid. Please fix JSON format.')
-      return null
-    }
-  }
-
   const onCompare = () => {
     setError('')
     if (!soapXml.trim() || !restXml.trim()) {
@@ -71,11 +63,8 @@ function App() {
       return
     }
 
-    const rules = parseRules()
-    if (!rules) return
-
     try {
-      setReport(compareXml(soapXml, restXml, mode, rules))
+      setReport(compareXml(soapXml, restXml, mode, DEFAULT_RULES))
     } catch (compareError) {
       setReport(null)
       setError(compareError instanceof Error ? compareError.message : 'Failed to compare XML.')
@@ -110,8 +99,8 @@ function App() {
       <header>
         <h1>NetSuite SOAP vs REST XML Adaptive Comparer</h1>
         <p>
-          Browser-only static tool for compatibility checks. <strong>Privacy:</strong> XML is processed locally in
-          your browser and is never uploaded by this app.
+          Browser-only static tool for similarity checks. <strong>Privacy:</strong> XML is processed locally in your
+          browser and is never uploaded by this app.
         </p>
       </header>
 
@@ -152,22 +141,6 @@ function App() {
           <input type="file" accept=".xml,text/xml" onChange={readXmlFile(setRestXml)} />
           <textarea value={restXml} onChange={(e) => setRestXml(e.target.value)} placeholder="Paste REST XML" />
         </article>
-      </section>
-
-      <section>
-        <h2>Rules Preset: NetSuite SOAP-to-REST Invoice Compatibility</h2>
-        <p>Edit aliases, ignore paths, collection matching, nested penetration, and normalizers as JSON.</p>
-        <div className="actions">
-          <button type="button" onClick={() => setRulesText(JSON.stringify(DEFAULT_RULES, null, 2))}>
-            Reset to Default Rules
-          </button>
-        </div>
-        <textarea
-          className="rules"
-          value={rulesText}
-          onChange={(e) => setRulesText(e.target.value)}
-          aria-label="Rules JSON editor"
-        />
       </section>
 
       {error && <p className="error">{error}</p>}
@@ -213,6 +186,27 @@ function App() {
             </button>
           </div>
 
+          <h3>Sorted XML Difference View</h3>
+          <p className="muted">
+            Each XML tree is shown from its detected business root, with attributes and same-level child nodes sorted
+            alphabetically before comparison.
+          </p>
+          <div className="xml-diff-grid">
+            <XmlViewer
+              title="SOAP / Baseline sorted XML"
+              value={report.sortedXml.soap}
+              lines={report.sortedXml.soapLines}
+              extensions={xmlExtensions}
+            />
+            <XmlViewer
+              title="REST / Candidate sorted XML"
+              value={report.sortedXml.rest}
+              lines={report.sortedXml.restLines}
+              extensions={xmlExtensions}
+            />
+          </div>
+
+          <h3>Flat Difference List</h3>
           <div className="table-wrap">
             <table>
               <thead>
@@ -246,6 +240,40 @@ function App() {
         </section>
       )}
     </main>
+  )
+}
+
+function XmlViewer({
+  title,
+  value,
+  lines,
+  extensions,
+}: {
+  title: string
+  value: string
+  lines: { lineNumber: number; different: boolean }[]
+  extensions: ReturnType<typeof xml>[]
+}) {
+  const changedLines = lines.filter((line) => line.different).map((line) => line.lineNumber)
+
+  return (
+    <article className="xml-viewer">
+      <div className="xml-viewer-heading">
+        <h4>{title}</h4>
+        <span>{changedLines.length} changed lines</span>
+      </div>
+      <CodeMirror
+        value={value}
+        height="420px"
+        extensions={extensions}
+        basicSetup={{ foldGutter: true, lineNumbers: true, highlightActiveLine: false }}
+        editable={false}
+        theme="light"
+      />
+      {changedLines.length > 0 && (
+        <p className="changed-lines">Changed lines: {changedLines.slice(0, 60).join(', ')}</p>
+      )}
+    </article>
   )
 }
 
