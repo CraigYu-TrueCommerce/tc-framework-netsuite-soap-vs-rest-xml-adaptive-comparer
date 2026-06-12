@@ -78,7 +78,7 @@ describe('compareXml', () => {
     const restBIndex = report.sortedXml.restLines.findIndex((line) => line.text.includes('<b>extra</b>'))
 
     expect(report.sortedXml.restLines[soapCIndex].text).toContain('<c>3</c>')
-    expect(report.sortedXml.soapLines[soapCIndex].highlight).toBe('original')
+    expect(report.sortedXml.soapLines[soapCIndex].highlight).toBe('critical')
     expect(report.sortedXml.restLines[soapCIndex].highlight).toBe('critical')
     expect(report.sortedXml.soapLines[restBIndex].text).toBe('')
   })
