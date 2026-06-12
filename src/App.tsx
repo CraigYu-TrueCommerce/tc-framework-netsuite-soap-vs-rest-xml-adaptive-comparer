@@ -288,7 +288,7 @@ function XmlViewer({
       </div>
       <CodeMirror
         value={viewerValue}
-        height="420px"
+        height="calc(100vh - 14rem)"
         extensions={viewerExtensions}
         basicSetup={{ foldGutter: true, lineNumbers: true, highlightActiveLine: false, searchKeymap: true }}
         editable={false}
