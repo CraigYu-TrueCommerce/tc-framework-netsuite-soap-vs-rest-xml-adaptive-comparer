@@ -181,8 +181,9 @@ function App() {
           <h3>Sorted XML Difference View</h3>
           <p className="muted">
             Each XML tree is shown from its detected business root, with attributes and same-level child nodes sorted
-            alphabetically before comparison.
+            alphabetically before comparison. Blank lines align same-level nodes where one side has extra content.
           </p>
+          <HighlightLegend />
           <div className="xml-diff-grid">
             <XmlViewer
               title="SOAP / Baseline sorted XML"
@@ -207,6 +208,17 @@ function App() {
         </section>
       )}
     </main>
+  )
+}
+
+function HighlightLegend() {
+  return (
+    <div className="highlight-legend" aria-label="Highlight legend">
+      <span className="legend-original">SOAP-only or original changed line</span>
+      <span className="legend-critical">REST differs from SOAP or SOAP line is missing</span>
+      <span className="legend-warning">Same node name with different case only</span>
+      <span className="legend-info">REST-only extra line</span>
+    </div>
   )
 }
 
