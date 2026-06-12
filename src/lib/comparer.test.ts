@@ -58,6 +58,44 @@ describe('compareXml', () => {
     expect(report.sortedXml.restLines.some((line) => line.text === '' && !line.different)).toBe(true)
   })
 
+  it('does not pair unrelated same-level nodes as changed false positives', () => {
+    const report = compareXml('<Invoice><a>1</a></Invoice>', '<Invoice><b>1</b></Invoice>', 'normalized', DEFAULT_RULES)
+
+    expect(
+      report.sortedXml.soapLines.some((line, index) => line.text.includes('<a>') && report.sortedXml.restLines[index].text),
+    ).toBe(false)
+    expect(report.sortedXml.soapLines.some((line) => line.text.includes('<a>1</a>') && line.highlight === 'original')).toBe(
+      true,
+    )
+    expect(report.sortedXml.restLines.some((line) => line.text.includes('<b>1</b>') && line.highlight === 'info')).toBe(
+      true,
+    )
+  })
+
+  it('aligns same-level nodes by name after inserting blanks for extra nodes', () => {
+    const soap = '<Invoice><a>1</a><c>2</c></Invoice>'
+    const rest = '<Invoice><a>1</a><b>extra</b><c>3</c></Invoice>'
+    const report = compareXml(soap, rest, 'normalized', DEFAULT_RULES)
+    const soapCIndex = report.sortedXml.soapLines.findIndex((line) => line.text.includes('<c>2</c>'))
+    const restBIndex = report.sortedXml.restLines.findIndex((line) => line.text.includes('<b>extra</b>'))
+
+    expect(report.sortedXml.restLines[soapCIndex].text).toContain('<c>3</c>')
+    expect(report.sortedXml.soapLines[soapCIndex].highlight).toBe('original')
+    expect(report.sortedXml.restLines[soapCIndex].highlight).toBe('critical')
+    expect(report.sortedXml.soapLines[restBIndex].text).toBe('')
+  })
+
+  it('highlights same node names with different case as warnings', () => {
+    const report = compareXml('<Invoice><subTotal>10</subTotal></Invoice>', '<Invoice><subtotal>10</subtotal></Invoice>', 'normalized', DEFAULT_RULES)
+
+    expect(report.sortedXml.soapLines.some((line) => line.text.includes('<subTotal>10</subTotal>') && line.highlight === 'warning')).toBe(
+      true,
+    )
+    expect(report.sortedXml.restLines.some((line) => line.text.includes('<subtotal>10</subtotal>') && line.highlight === 'warning')).toBe(
+      true,
+    )
+  })
+
   it('exports the CodeMirror-style sorted diff as an HTML report', () => {
     const report = compareXml('<Invoice><a>&amp;</a></Invoice>', '<Invoice><a>2</a></Invoice>', 'normalized', DEFAULT_RULES)
     const html = reportToHtml(report)
@@ -65,6 +103,8 @@ describe('compareXml', () => {
     expect(html).toContain('<title>XML Compare Report</title>')
     expect(html).toContain('SOAP / Baseline sorted XML')
     expect(html).toContain('&amp;amp;')
+    expect(html).toContain('Highlight legend')
+    expect(html).toContain('Same node name with different case only')
     expect(html).toContain('Changed Entries')
   })
 })

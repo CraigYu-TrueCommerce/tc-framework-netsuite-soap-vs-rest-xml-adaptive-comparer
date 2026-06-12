@@ -65,7 +65,7 @@ export interface XmlDiffLine {
   lineNumber: number
   text: string
   different: boolean
-  highlight?: 'original' | 'critical' | 'info'
+  highlight?: 'original' | 'critical' | 'warning' | 'info'
 }
 
 interface ValueRecord {
@@ -280,8 +280,11 @@ function compareSortableElements(a: Element, b: Element): number {
   const typeCompare = Number(hasNestedElements(a)) - Number(hasNestedElements(b))
   if (typeCompare !== 0) return typeCompare
 
-  const tagCompare = a.tagName.localeCompare(b.tagName)
+  const tagCompare = a.tagName.toLowerCase().localeCompare(b.tagName.toLowerCase())
   if (tagCompare !== 0) return tagCompare
+
+  const caseCompare = a.tagName.localeCompare(b.tagName)
+  if (caseCompare !== 0) return caseCompare
 
   return sortableElementText(a).localeCompare(sortableElementText(b))
 }
@@ -381,27 +384,70 @@ function alignLines(soapLines: string[], restLines: string[]): AlignedDiffLine[]
 }
 
 function alignLinesByPosition(soapLines: string[], restLines: string[]): AlignedDiffLine[] {
-  const maxLines = Math.max(soapLines.length, restLines.length)
-  return Array.from({ length: maxLines }, (_, index) => {
-    const soapText = soapLines[index] ?? ''
-    const restText = restLines[index] ?? ''
-    if (soapText === restText) {
-      return { type: 'equal', soapText, restText }
+  const operations: RawDiffOperation[] = []
+  let soapIndex = 0
+  let restIndex = 0
+  const lookahead = 200
+
+  while (soapIndex < soapLines.length || restIndex < restLines.length) {
+    if (soapIndex >= soapLines.length) {
+      operations.push({ type: 'insert', restText: restLines[restIndex] })
+      restIndex += 1
+      continue
     }
-    if (soapText === '') {
-      return { type: 'extraInRest', soapText, restText, soapHighlight: 'info', restHighlight: 'info' }
+    if (restIndex >= restLines.length) {
+      operations.push({ type: 'delete', soapText: soapLines[soapIndex] })
+      soapIndex += 1
+      continue
     }
-    if (restText === '') {
-      return { type: 'missingFromRest', soapText, restText, soapHighlight: 'original', restHighlight: 'critical' }
+
+    const currentSoapSignature = lineSignature(soapLines[soapIndex])
+    const currentRestSignature = lineSignature(restLines[restIndex])
+    if (
+      soapLines[soapIndex] === restLines[restIndex] ||
+      (currentSoapSignature !== null && currentSoapSignature === currentRestSignature)
+    ) {
+      operations.push({ type: 'delete', soapText: soapLines[soapIndex] })
+      operations.push({ type: 'insert', restText: restLines[restIndex] })
+      soapIndex += 1
+      restIndex += 1
+      continue
     }
-    return { type: 'changed', soapText, restText, soapHighlight: 'original', restHighlight: 'critical' }
-  })
+
+    const restMatch = currentSoapSignature
+      ? restLines
+          .slice(restIndex + 1, restIndex + lookahead + 1)
+          .findIndex((line) => lineSignature(line) === currentSoapSignature)
+      : -1
+    const soapMatch = currentRestSignature
+      ? soapLines
+          .slice(soapIndex + 1, soapIndex + lookahead + 1)
+          .findIndex((line) => lineSignature(line) === currentRestSignature)
+      : -1
+
+    if (restMatch !== -1 && (soapMatch === -1 || restMatch <= soapMatch)) {
+      operations.push({ type: 'insert', restText: restLines[restIndex] })
+      restIndex += 1
+      continue
+    }
+    if (soapMatch !== -1) {
+      operations.push({ type: 'delete', soapText: soapLines[soapIndex] })
+      soapIndex += 1
+      continue
+    }
+
+    operations.push({ type: 'delete', soapText: soapLines[soapIndex] })
+    operations.push({ type: 'insert', restText: restLines[restIndex] })
+    soapIndex += 1
+    restIndex += 1
+  }
+
+  return pairChangedLines(operations)
 }
 
 function pairChangedLines(operations: RawDiffOperation[]): AlignedDiffLine[] {
   const alignedLines: AlignedDiffLine[] = []
   let index = 0
-  const safePairLimit = 12
 
   while (index < operations.length) {
     const operation = operations[index]
@@ -422,33 +468,14 @@ function pairChangedLines(operations: RawDiffOperation[]): AlignedDiffLine[] {
       index += 1
     }
 
-    const shouldPairChanges =
-      deletes.length > 0 &&
-      inserts.length > 0 &&
-      deletes.length === inserts.length &&
-      deletes.length <= safePairLimit &&
-      deletes.every((soapText, changeIndex) => leadingWhitespace(soapText) === leadingWhitespace(inserts[changeIndex]))
-
-    if (shouldPairChanges) {
-      deletes.forEach((soapText, changeIndex) => {
-        alignedLines.push({
-          type: 'changed',
-          soapText,
-          restText: inserts[changeIndex],
-          soapHighlight: 'original',
-          restHighlight: 'critical',
-        })
-      })
+    if (deletes.length > 0 && inserts.length > 0) {
+      alignedLines.push(...alignChangedBlock(deletes, inserts))
       continue
     }
 
     deletes.forEach((soapText) => {
       alignedLines.push({ type: 'missingFromRest', soapText, restText: '', soapHighlight: 'original', restHighlight: 'critical' })
     })
-
-    if (deletes.length > 0 && inserts.length > 0) {
-      alignedLines.push({ type: 'equal', soapText: '', restText: '' })
-    }
 
     inserts.forEach((restText) => {
       alignedLines.push({ type: 'extraInRest', soapText: '', restText, soapHighlight: 'info', restHighlight: 'info' })
@@ -458,8 +485,99 @@ function pairChangedLines(operations: RawDiffOperation[]): AlignedDiffLine[] {
   return alignedLines
 }
 
-function leadingWhitespace(value: string): string {
-  return value.match(/^\s*/)?.[0] ?? ''
+function alignChangedBlock(deletes: string[], inserts: string[]): AlignedDiffLine[] {
+  const alignedLines: AlignedDiffLine[] = []
+  let deleteIndex = 0
+  let insertIndex = 0
+
+  while (deleteIndex < deletes.length || insertIndex < inserts.length) {
+    if (deleteIndex >= deletes.length) {
+      alignedLines.push({ type: 'extraInRest', soapText: '', restText: inserts[insertIndex], soapHighlight: 'info', restHighlight: 'info' })
+      insertIndex += 1
+      continue
+    }
+    if (insertIndex >= inserts.length) {
+      alignedLines.push({
+        type: 'missingFromRest',
+        soapText: deletes[deleteIndex],
+        restText: '',
+        soapHighlight: 'original',
+        restHighlight: 'critical',
+      })
+      deleteIndex += 1
+      continue
+    }
+
+    const deleteSignature = lineSignature(deletes[deleteIndex])
+    const insertSignature = lineSignature(inserts[insertIndex])
+    if (deleteSignature && deleteSignature === insertSignature) {
+      alignedLines.push(pairSameNodeLine(deletes[deleteIndex], inserts[insertIndex]))
+      deleteIndex += 1
+      insertIndex += 1
+      continue
+    }
+
+    const nextInsertMatch = deleteSignature
+      ? inserts.slice(insertIndex + 1).findIndex((line) => lineSignature(line) === deleteSignature)
+      : -1
+    const nextDeleteMatch = insertSignature
+      ? deletes.slice(deleteIndex + 1).findIndex((line) => lineSignature(line) === insertSignature)
+      : -1
+
+    if (nextInsertMatch !== -1 && (nextDeleteMatch === -1 || nextInsertMatch <= nextDeleteMatch)) {
+      alignedLines.push({ type: 'extraInRest', soapText: '', restText: inserts[insertIndex], soapHighlight: 'info', restHighlight: 'info' })
+      insertIndex += 1
+      continue
+    }
+
+    if (nextDeleteMatch !== -1) {
+      alignedLines.push({
+        type: 'missingFromRest',
+        soapText: deletes[deleteIndex],
+        restText: '',
+        soapHighlight: 'original',
+        restHighlight: 'critical',
+      })
+      deleteIndex += 1
+      continue
+    }
+
+    alignedLines.push({
+      type: 'missingFromRest',
+      soapText: deletes[deleteIndex],
+      restText: '',
+      soapHighlight: 'original',
+      restHighlight: 'critical',
+    })
+    alignedLines.push({ type: 'equal', soapText: '', restText: '' })
+    alignedLines.push({ type: 'extraInRest', soapText: '', restText: inserts[insertIndex], soapHighlight: 'info', restHighlight: 'info' })
+    deleteIndex += 1
+    insertIndex += 1
+  }
+
+  return alignedLines
+}
+
+function pairSameNodeLine(soapText: string, restText: string): AlignedDiffLine {
+  if (soapText === restText) {
+    return { type: 'equal', soapText, restText }
+  }
+
+  if (soapText.toLowerCase() === restText.toLowerCase()) {
+    return { type: 'changed', soapText, restText, soapHighlight: 'warning', restHighlight: 'warning' }
+  }
+
+  return { type: 'changed', soapText, restText, soapHighlight: 'original', restHighlight: 'critical' }
+}
+
+function lineSignature(value: string): string | null {
+  const trimmed = value.trim()
+  const indent = value.match(/^\s*/)?.[0].length ?? 0
+  const tag = trimmed.match(/^<\/?([A-Za-z_][\w:.-]*)/)?.[1]
+  if (!tag) return null
+
+  const type = trimmed.startsWith('</') ? 'close' : trimmed.includes(`</${tag}>`) ? 'leaf' : 'open'
+  return `${indent}:${type}:${tag.toLowerCase()}`
 }
 
 export function reportToHtml(report: CompareReport): string {
@@ -487,11 +605,14 @@ export function reportToHtml(report: CompareReport): string {
     .summary { display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: .4rem; margin: .75rem 0 1rem; }
     .summary div, pre, table { border: 1px solid #ddd; }
     .summary div { padding: .4rem; background: #fafafa; }
+    .legend { display: flex; flex-wrap: wrap; gap: .5rem; margin: .75rem 0 1rem; }
+    .legend span { border: 1px solid #ddd; border-left-width: 3px; padding: .3rem .45rem; }
     .diff-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 1rem; }
     pre { margin: 0; padding: .75rem; overflow: auto; line-height: 1.4; background: #fff; }
     .line { display: block; min-height: 1.4em; white-space: pre; }
     .original { background: #e8f7ec; border-left: 3px solid #218838; }
     .critical { background: #fde7e9; border-left: 3px solid #c82333; }
+    .warning { background: #fff3cd; border-left: 3px solid #d39e00; }
     .info { background: #e7f1ff; border-left: 3px solid #0b5ed7; }
     table { width: 100%; border-collapse: collapse; margin-top: 1rem; font-size: .9rem; }
     th, td { border: 1px solid #ddd; padding: .35rem; text-align: left; vertical-align: top; }
@@ -509,6 +630,12 @@ export function reportToHtml(report: CompareReport): string {
     <div>Extra in REST: ${report.summary.extraInCandidate}</div>
     <div>Structural/adaptive matches: ${report.summary.structuralMatches}</div>
     <div>Compatibility score: ${report.summary.compatibilityScore}%</div>
+  </section>
+  <section class="legend" aria-label="Highlight legend">
+    <span class="original">SOAP-only or original changed line</span>
+    <span class="critical">REST differs from SOAP or SOAP line is missing</span>
+    <span class="warning">Same node name with different case only</span>
+    <span class="info">REST-only extra line</span>
   </section>
   <section class="diff-grid">
     <article>
