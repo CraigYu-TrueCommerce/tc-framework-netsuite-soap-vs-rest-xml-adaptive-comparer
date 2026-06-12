@@ -1,6 +1,7 @@
-import { useMemo, useState, type ChangeEvent } from 'react'
+import { useCallback, useMemo, useRef, useState, type ChangeEvent } from 'react'
 import CodeMirror from '@uiw/react-codemirror'
 import { xml } from '@codemirror/lang-xml'
+import { Decoration, EditorView, ViewPlugin, type DecorationSet, type ViewUpdate } from '@codemirror/view'
 import './App.css'
 import {
   compareXml,
@@ -10,6 +11,7 @@ import {
   INVOICE_SAMPLE_REST,
   INVOICE_SAMPLE_SOAP,
   type CompareMode,
+  type XmlDiffLine,
 } from './lib/comparer'
 
 const MODE_OPTIONS: CompareMode[] = ['strict', 'normalized', 'adaptive']
@@ -24,6 +26,31 @@ function App() {
   const [error, setError] = useState('')
   const [report, setReport] = useState<ReturnType<typeof compareXml> | null>(null)
   const xmlExtensions = useMemo(() => [xml()], [])
+  const soapEditorRef = useRef<EditorView | null>(null)
+  const restEditorRef = useRef<EditorView | null>(null)
+  const isSyncingScrollRef = useRef(false)
+
+  const syncXmlScroll = useCallback((source: 'soap' | 'rest') => {
+    return (sourceEditor: EditorView) => {
+      if (isSyncingScrollRef.current) return
+
+      const targetEditor = source === 'soap' ? restEditorRef.current : soapEditorRef.current
+      if (!targetEditor) return
+
+      const sourceScroller = sourceEditor.scrollDOM
+      const targetScroller = targetEditor.scrollDOM
+      const sourceScrollableHeight = sourceScroller.scrollHeight - sourceScroller.clientHeight
+      const targetScrollableHeight = targetScroller.scrollHeight - targetScroller.clientHeight
+      const scrollRatio = sourceScrollableHeight > 0 ? sourceScroller.scrollTop / sourceScrollableHeight : 0
+
+      isSyncingScrollRef.current = true
+      targetScroller.scrollTop = scrollRatio * targetScrollableHeight
+      targetScroller.scrollLeft = sourceScroller.scrollLeft
+      requestAnimationFrame(() => {
+        isSyncingScrollRef.current = false
+      })
+    }
+  }, [])
 
   const statuses = useMemo(
     () => ['all', ...(report ? [...new Set(report.entries.map((e) => e.status))] : [])],
@@ -194,15 +221,21 @@ function App() {
           <div className="xml-diff-grid">
             <XmlViewer
               title="SOAP / Baseline sorted XML"
-              value={report.sortedXml.soap}
               lines={report.sortedXml.soapLines}
               extensions={xmlExtensions}
+              onCreateEditor={(view) => {
+                soapEditorRef.current = view
+              }}
+              onScrollSync={syncXmlScroll('soap')}
             />
             <XmlViewer
               title="REST / Candidate sorted XML"
-              value={report.sortedXml.rest}
               lines={report.sortedXml.restLines}
               extensions={xmlExtensions}
+              onCreateEditor={(view) => {
+                restEditorRef.current = view
+              }}
+              onScrollSync={syncXmlScroll('rest')}
             />
           </div>
 
@@ -245,16 +278,31 @@ function App() {
 
 function XmlViewer({
   title,
-  value,
   lines,
   extensions,
+  onCreateEditor,
+  onScrollSync,
 }: {
   title: string
-  value: string
-  lines: { lineNumber: number; different: boolean }[]
+  lines: XmlDiffLine[]
   extensions: ReturnType<typeof xml>[]
+  onCreateEditor: (view: EditorView) => void
+  onScrollSync: (view: EditorView) => void
 }) {
   const changedLines = lines.filter((line) => line.different).map((line) => line.lineNumber)
+  const viewerValue = useMemo(() => lines.map((line) => line.text).join('\n'), [lines])
+  const viewerExtensions = useMemo(
+    () => [
+      ...extensions,
+      xmlLineHighlightExtension(lines),
+      EditorView.domEventHandlers({
+        scroll: (_event, view) => {
+          onScrollSync(view)
+        },
+      }),
+    ],
+    [extensions, lines, onScrollSync],
+  )
 
   return (
     <article className="xml-viewer">
@@ -263,18 +311,54 @@ function XmlViewer({
         <span>{changedLines.length} changed lines</span>
       </div>
       <CodeMirror
-        value={value}
+        value={viewerValue}
         height="420px"
-        extensions={extensions}
+        extensions={viewerExtensions}
         basicSetup={{ foldGutter: true, lineNumbers: true, highlightActiveLine: false }}
         editable={false}
         theme="light"
+        onCreateEditor={onCreateEditor}
       />
       {changedLines.length > 0 && (
         <p className="changed-lines">Changed lines: {changedLines.slice(0, 60).join(', ')}</p>
       )}
     </article>
   )
+}
+
+function xmlLineHighlightExtension(lines: XmlDiffLine[]) {
+  const lineClasses = new Map(
+    lines
+      .filter((line) => line.highlight)
+      .map((line) => [line.lineNumber, `cm-diff-${line.highlight}`]),
+  )
+
+  return ViewPlugin.fromClass(
+    class {
+      decorations: DecorationSet
+
+      constructor(view: EditorView) {
+        this.decorations = buildLineDecorations(view, lineClasses)
+      }
+
+      update(update: ViewUpdate) {
+        if (update.docChanged || update.viewportChanged) {
+          this.decorations = buildLineDecorations(update.view, lineClasses)
+        }
+      }
+    },
+    {
+      decorations: (plugin) => plugin.decorations,
+    },
+  )
+}
+
+function buildLineDecorations(view: EditorView, lineClasses: Map<number, string>): DecorationSet {
+  const decorations = [...lineClasses.entries()]
+    .filter(([lineNumber]) => lineNumber <= view.state.doc.lines)
+    .map(([lineNumber, className]) => Decoration.line({ class: className }).range(view.state.doc.line(lineNumber).from))
+
+  return Decoration.set(decorations, true)
 }
 
 export default App

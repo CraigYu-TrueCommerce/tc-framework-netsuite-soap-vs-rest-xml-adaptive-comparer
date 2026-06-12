@@ -65,6 +65,7 @@ export interface XmlDiffLine {
   lineNumber: number
   text: string
   different: boolean
+  highlight?: 'original' | 'critical' | 'info'
 }
 
 interface ValueRecord {
@@ -304,20 +305,127 @@ function buildLineDiff(
 } {
   const soapLines = soapXml.split('\n')
   const restLines = restXml.split('\n')
-  const maxLines = Math.max(soapLines.length, restLines.length)
+  const alignedLines = alignLines(soapLines, restLines)
 
   return {
-    soapLines: Array.from({ length: maxLines }, (_, index) => ({
+    soapLines: alignedLines.map((line, index) => ({
       lineNumber: index + 1,
-      text: soapLines[index] ?? '',
-      different: (soapLines[index] ?? '') !== (restLines[index] ?? ''),
+      text: line.soapText,
+      different: line.type !== 'equal',
+      highlight: line.soapHighlight,
     })),
-    restLines: Array.from({ length: maxLines }, (_, index) => ({
+    restLines: alignedLines.map((line, index) => ({
       lineNumber: index + 1,
-      text: restLines[index] ?? '',
-      different: (soapLines[index] ?? '') !== (restLines[index] ?? ''),
+      text: line.restText,
+      different: line.type !== 'equal',
+      highlight: line.restHighlight,
     })),
   }
+}
+
+type RawDiffOperation =
+  | { type: 'equal'; soapText: string; restText: string }
+  | { type: 'delete'; soapText: string }
+  | { type: 'insert'; restText: string }
+
+interface AlignedDiffLine {
+  type: 'equal' | 'changed' | 'missingFromRest' | 'extraInRest'
+  soapText: string
+  restText: string
+  soapHighlight?: XmlDiffLine['highlight']
+  restHighlight?: XmlDiffLine['highlight']
+}
+
+function alignLines(soapLines: string[], restLines: string[]): AlignedDiffLine[] {
+  if (soapLines.length * restLines.length > 250000) {
+    return alignLinesByPosition(soapLines, restLines)
+  }
+
+  const lcs = Array.from({ length: soapLines.length + 1 }, () => Array(restLines.length + 1).fill(0) as number[])
+
+  for (let i = soapLines.length - 1; i >= 0; i -= 1) {
+    for (let j = restLines.length - 1; j >= 0; j -= 1) {
+      lcs[i][j] =
+        soapLines[i] === restLines[j] ? lcs[i + 1][j + 1] + 1 : Math.max(lcs[i + 1][j], lcs[i][j + 1])
+    }
+  }
+
+  const operations: RawDiffOperation[] = []
+  let soapIndex = 0
+  let restIndex = 0
+  while (soapIndex < soapLines.length || restIndex < restLines.length) {
+    if (soapIndex < soapLines.length && restIndex < restLines.length && soapLines[soapIndex] === restLines[restIndex]) {
+      operations.push({ type: 'equal', soapText: soapLines[soapIndex], restText: restLines[restIndex] })
+      soapIndex += 1
+      restIndex += 1
+    } else if (restIndex >= restLines.length || lcs[soapIndex + 1]?.[restIndex] >= lcs[soapIndex]?.[restIndex + 1]) {
+      operations.push({ type: 'delete', soapText: soapLines[soapIndex] })
+      soapIndex += 1
+    } else {
+      operations.push({ type: 'insert', restText: restLines[restIndex] })
+      restIndex += 1
+    }
+  }
+
+  return pairChangedLines(operations)
+}
+
+function alignLinesByPosition(soapLines: string[], restLines: string[]): AlignedDiffLine[] {
+  const maxLines = Math.max(soapLines.length, restLines.length)
+  return Array.from({ length: maxLines }, (_, index) => {
+    const soapText = soapLines[index] ?? ''
+    const restText = restLines[index] ?? ''
+    if (soapText === restText) {
+      return { type: 'equal', soapText, restText }
+    }
+    if (soapText === '') {
+      return { type: 'extraInRest', soapText, restText, soapHighlight: 'info', restHighlight: 'info' }
+    }
+    if (restText === '') {
+      return { type: 'missingFromRest', soapText, restText, soapHighlight: 'original', restHighlight: 'critical' }
+    }
+    return { type: 'changed', soapText, restText, soapHighlight: 'original', restHighlight: 'critical' }
+  })
+}
+
+function pairChangedLines(operations: RawDiffOperation[]): AlignedDiffLine[] {
+  const alignedLines: AlignedDiffLine[] = []
+  let index = 0
+
+  while (index < operations.length) {
+    const operation = operations[index]
+    if (operation.type === 'equal') {
+      alignedLines.push({ type: 'equal', soapText: operation.soapText, restText: operation.restText })
+      index += 1
+      continue
+    }
+
+    const deletes: string[] = []
+    const inserts: string[] = []
+    while (operations[index]?.type === 'delete') {
+      deletes.push((operations[index] as Extract<RawDiffOperation, { type: 'delete' }>).soapText)
+      index += 1
+    }
+    while (operations[index]?.type === 'insert') {
+      inserts.push((operations[index] as Extract<RawDiffOperation, { type: 'insert' }>).restText)
+      index += 1
+    }
+
+    const maxChanges = Math.max(deletes.length, inserts.length)
+    for (let changeIndex = 0; changeIndex < maxChanges; changeIndex += 1) {
+      const soapText = deletes[changeIndex] ?? ''
+      const restText = inserts[changeIndex] ?? ''
+      if (soapText && restText) {
+        alignedLines.push({ type: 'changed', soapText, restText, soapHighlight: 'original', restHighlight: 'critical' })
+      } else if (soapText) {
+        alignedLines.push({ type: 'missingFromRest', soapText, restText, soapHighlight: 'original', restHighlight: 'critical' })
+      } else {
+        alignedLines.push({ type: 'extraInRest', soapText, restText, soapHighlight: 'info', restHighlight: 'info' })
+      }
+    }
+  }
+
+  return alignedLines
 }
 
 function findBusinessRoot(doc: Document): Element {

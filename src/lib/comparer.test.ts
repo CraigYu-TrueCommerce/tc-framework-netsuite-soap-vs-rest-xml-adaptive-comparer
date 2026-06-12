@@ -31,4 +31,18 @@ describe('compareXml', () => {
     expect(report.sortedXml.soapLines.some((line) => line.different)).toBe(true)
     expect(report.sortedXml.restLines.some((line) => line.different)).toBe(true)
   })
+
+  it('aligns side-by-side XML diff lines with blank placeholders and highlight types', () => {
+    const soap = '<Envelope><Invoice><a>1</a></Invoice></Envelope>'
+    const rest = '<Root><Invoice><a>1</a><b>2</b></Invoice></Root>'
+    const report = compareXml(soap, rest, 'normalized', DEFAULT_RULES)
+
+    expect(report.sortedXml.soapLines).toHaveLength(report.sortedXml.restLines.length)
+    expect(report.sortedXml.soapLines.some((line) => line.different && line.text === '' && line.highlight === 'info')).toBe(
+      true,
+    )
+    expect(report.sortedXml.restLines.some((line) => line.text.includes('<b>2</b>') && line.highlight === 'info')).toBe(
+      true,
+    )
+  })
 })
