@@ -180,6 +180,26 @@ input[type='file'] {
   padding: 0.3rem 0.45rem;
 }
 
+.highlight-legend .legend-case-sample,
+.highlight-legend .legend-value-sample {
+  display: inline-block;
+  margin-left: 0.35rem;
+  border: 0;
+  border-radius: 3px;
+  padding: 0.05rem 0.25rem;
+  font-weight: 700;
+}
+
+.legend-case-sample {
+  background: #d39e00;
+  color: #1f1f1f;
+}
+
+.legend-value-sample {
+  background: #8b0000;
+  color: #fff;
+}
+
 .legend-critical {
   background: #fde7e9;
   border-left-color: #c82333;

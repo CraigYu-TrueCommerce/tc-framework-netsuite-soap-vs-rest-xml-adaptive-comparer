@@ -681,12 +681,21 @@ export function reportToHtml(report: CompareReport): string {
     td { font-weight: 700; }
     .legend { display: flex; flex-wrap: wrap; gap: .5rem; margin: .75rem 0 1rem; }
     .legend span { border: 1px solid #ddd; border-left-width: 3px; padding: .3rem .45rem; }
+    .legend .case-char, .legend .value-char { display: inline-block; margin-left: .35rem; border: 0; border-radius: 3px; padding: .05rem .25rem; }
+    .report-actions { display: flex; flex-wrap: wrap; gap: .75rem; align-items: center; margin: .75rem 0 1rem; }
+    .report-actions button { padding: .45rem .7rem; }
+    .report-actions span { color: #555; font-size: .9rem; }
     .diff-wrap { border: 1px solid #ddd; }
     .diff-table { width: 100%; table-layout: fixed; border: 0; font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; font-size: 1.05rem; }
-    .diff-table th { position: sticky; top: 0; z-index: 1; width: 50%; background: #f4f7fb; }
-    .diff-table td { width: 50%; max-width: 0; padding: 0; vertical-align: top; font-weight: 400; border-color: #ececec; overflow: hidden; }
+    .diff-table th { position: sticky; top: 0; z-index: 1; background: #f4f7fb; }
+    .diff-table .xml-col { width: 42%; }
+    .diff-table .comment-col { width: 16%; }
+    .diff-table td { max-width: 0; padding: 0; vertical-align: top; font-weight: 400; border-color: #ececec; overflow: hidden; }
     .diff-table tr { border-bottom: 1px solid #f0f0f0; }
     .line { display: block; min-height: 1.5em; padding: .05rem .5rem; line-height: 1.5; white-space: pre; overflow-x: auto; }
+    .comment-cell { background: #fff; }
+    .comment-cell textarea { display: block; width: 100%; min-height: 3rem; box-sizing: border-box; border: 0; padding: .35rem .45rem; resize: vertical; font: 1rem Arial, sans-serif; }
+    .comment-cell textarea:focus { outline: 2px solid #0b5ed7; outline-offset: -2px; }
     .critical { background: #fde7e9; border-left: 3px solid #c82333; }
     .warning { background: #fff3cd; border-left: 3px solid #d39e00; }
     .info { background: #e7f1ff; border-left: 3px solid #0b5ed7; }
@@ -721,15 +730,20 @@ export function reportToHtml(report: CompareReport): string {
     </div>
   </section>
   <section class="legend" aria-label="Highlight legend">
-    <span class="critical">SOAP/REST line differs or SOAP line is missing</span>
-    <span class="warning">Same node name with different case only</span>
+    <span class="critical">SOAP/REST line differs or SOAP line is missing <span class="value-char">changed value</span></span>
+    <span class="warning">Same node name with different case only <span class="case-char">Case</span></span>
+  </section>
+  <section class="report-actions">
+    <button type="button" id="save-report">Save report with comments</button>
+    <span>Add comments in the Comment column, then save a new HTML copy that keeps them.</span>
   </section>
   <section class="diff-wrap">
     <table class="diff-table" aria-label="Aligned sorted XML differences">
       <thead>
         <tr>
-          <th>SOAP / Baseline sorted XML</th>
-          <th>REST / Candidate sorted XML</th>
+          <th class="xml-col">SOAP / Baseline sorted XML</th>
+          <th class="xml-col">REST / Candidate sorted XML</th>
+          <th class="comment-col">Comment</th>
         </tr>
       </thead>
       <tbody>
@@ -737,6 +751,34 @@ export function reportToHtml(report: CompareReport): string {
       </tbody>
     </table>
   </section>
+  <script>
+    (() => {
+      const button = document.getElementById('save-report');
+      if (!button) return;
+
+      button.addEventListener('click', () => {
+        const clone = document.documentElement.cloneNode(true);
+        const sourceComments = document.querySelectorAll('.comment-cell textarea');
+        const cloneComments = clone.querySelectorAll('.comment-cell textarea');
+
+        sourceComments.forEach((source, index) => {
+          const target = cloneComments[index];
+          if (target) {
+            target.textContent = source.value;
+          }
+        });
+
+        const blob = new Blob(['<!doctype html>\\n' + clone.outerHTML], { type: 'text/html' });
+        const link = document.createElement('a');
+        link.href = URL.createObjectURL(blob);
+        link.download = 'xml-compare-report-with-comments.html';
+        document.body.appendChild(link);
+        link.click();
+        link.remove();
+        setTimeout(() => URL.revokeObjectURL(link.href), 1000);
+      });
+    })();
+  </script>
 </body>
 </html>`
 }
@@ -746,7 +788,7 @@ function alignedLinesToHtml(soapLines: XmlDiffLine[], restLines: XmlDiffLine[]):
   return Array.from({ length: rowCount }, (_, index) => {
     const soapLine = soapLines[index] ?? { lineNumber: index + 1, text: '', different: true }
     const restLine = restLines[index] ?? { lineNumber: index + 1, text: '', different: true }
-    return `<tr><td>${lineToHtml(soapLine)}</td><td>${lineToHtml(restLine)}</td></tr>`
+    return `<tr><td>${lineToHtml(soapLine)}</td><td>${lineToHtml(restLine)}</td><td class="comment-cell"><textarea aria-label="Comment for diff row ${index + 1}" placeholder="Add comment"></textarea></td></tr>`
   })
     .join('\n')
 }
