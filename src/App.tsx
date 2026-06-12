@@ -31,13 +31,13 @@ function App() {
   const isSyncingScrollRef = useRef(false)
 
   const syncXmlScroll = useCallback((source: 'soap' | 'rest') => {
-    return (update: ViewUpdate) => {
-      if (!update.scrollChanged || isSyncingScrollRef.current) return
+    return (sourceEditor: EditorView) => {
+      if (isSyncingScrollRef.current) return
 
       const targetEditor = source === 'soap' ? restEditorRef.current : soapEditorRef.current
       if (!targetEditor) return
 
-      const sourceScroller = update.view.scrollDOM
+      const sourceScroller = sourceEditor.scrollDOM
       const targetScroller = targetEditor.scrollDOM
       const sourceScrollableHeight = sourceScroller.scrollHeight - sourceScroller.clientHeight
       const targetScrollableHeight = targetScroller.scrollHeight - targetScroller.clientHeight
@@ -226,7 +226,7 @@ function App() {
               onCreateEditor={(view) => {
                 soapEditorRef.current = view
               }}
-              onUpdate={syncXmlScroll('soap')}
+              onScrollSync={syncXmlScroll('soap')}
             />
             <XmlViewer
               title="REST / Candidate sorted XML"
@@ -235,7 +235,7 @@ function App() {
               onCreateEditor={(view) => {
                 restEditorRef.current = view
               }}
-              onUpdate={syncXmlScroll('rest')}
+              onScrollSync={syncXmlScroll('rest')}
             />
           </div>
 
@@ -281,17 +281,28 @@ function XmlViewer({
   lines,
   extensions,
   onCreateEditor,
-  onUpdate,
+  onScrollSync,
 }: {
   title: string
   lines: XmlDiffLine[]
   extensions: ReturnType<typeof xml>[]
   onCreateEditor: (view: EditorView) => void
-  onUpdate: (update: ViewUpdate) => void
+  onScrollSync: (view: EditorView) => void
 }) {
   const changedLines = lines.filter((line) => line.different).map((line) => line.lineNumber)
   const viewerValue = useMemo(() => lines.map((line) => line.text).join('\n'), [lines])
-  const viewerExtensions = useMemo(() => [...extensions, xmlLineHighlightExtension(lines)], [extensions, lines])
+  const viewerExtensions = useMemo(
+    () => [
+      ...extensions,
+      xmlLineHighlightExtension(lines),
+      EditorView.domEventHandlers({
+        scroll: (_event, view) => {
+          onScrollSync(view)
+        },
+      }),
+    ],
+    [extensions, lines, onScrollSync],
+  )
 
   return (
     <article className="xml-viewer">
@@ -307,7 +318,6 @@ function XmlViewer({
         editable={false}
         theme="light"
         onCreateEditor={onCreateEditor}
-        onUpdate={onUpdate}
       />
       {changedLines.length > 0 && (
         <p className="changed-lines">Changed lines: {changedLines.slice(0, 60).join(', ')}</p>
