@@ -1,0 +1,1 @@
+# tc-framework-netsuite-soap-vs-rest-xml-adaptive-comparer
