@@ -681,12 +681,12 @@ export function reportToHtml(report: CompareReport): string {
     td { font-weight: 700; }
     .legend { display: flex; flex-wrap: wrap; gap: .5rem; margin: .75rem 0 1rem; }
     .legend span { border: 1px solid #ddd; border-left-width: 3px; padding: .3rem .45rem; }
-    .diff-wrap { overflow: auto; border: 1px solid #ddd; }
-    .diff-table { min-width: 1200px; border: 0; font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; font-size: 1.05rem; }
+    .diff-wrap { border: 1px solid #ddd; }
+    .diff-table { width: 100%; table-layout: fixed; border: 0; font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; font-size: 1.05rem; }
     .diff-table th { position: sticky; top: 0; z-index: 1; width: 50%; background: #f4f7fb; }
-    .diff-table td { width: 50%; padding: 0; vertical-align: top; font-weight: 400; border-color: #ececec; }
+    .diff-table td { width: 50%; max-width: 0; padding: 0; vertical-align: top; font-weight: 400; border-color: #ececec; overflow: hidden; }
     .diff-table tr { border-bottom: 1px solid #f0f0f0; }
-    .line { display: block; min-height: 1.5em; padding: .05rem .5rem; line-height: 1.5; white-space: pre; }
+    .line { display: block; min-height: 1.5em; padding: .05rem .5rem; line-height: 1.5; white-space: pre; overflow-x: auto; }
     .critical { background: #fde7e9; border-left: 3px solid #c82333; }
     .warning { background: #fff3cd; border-left: 3px solid #d39e00; }
     .info { background: #e7f1ff; border-left: 3px solid #0b5ed7; }
