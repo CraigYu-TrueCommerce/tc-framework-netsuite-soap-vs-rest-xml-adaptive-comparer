@@ -1,0 +1,83 @@
+.app {
+  max-width: 1300px;
+  margin: 0 auto;
+  padding: 1rem;
+  font-family: Arial, sans-serif;
+}
+
+h1,
+h2 {
+  margin: 0.5rem 0;
+}
+
+.actions,
+.filters,
+.modes {
+  display: flex;
+  gap: 0.5rem;
+  flex-wrap: wrap;
+  align-items: center;
+}
+
+.panels {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 1rem;
+}
+
+textarea {
+  width: 100%;
+  min-height: 280px;
+  resize: vertical;
+  box-sizing: border-box;
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  margin-top: 0.5rem;
+}
+
+textarea.rules {
+  min-height: 220px;
+}
+
+button,
+select,
+input[type='search'],
+input[type='file'] {
+  padding: 0.4rem 0.6rem;
+}
+
+.summary-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+  gap: 0.4rem;
+  margin: 0.6rem 0;
+}
+
+.table-wrap {
+  overflow: auto;
+  border: 1px solid #ddd;
+}
+
+table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 0.86rem;
+}
+
+th,
+td {
+  border: 1px solid #ddd;
+  padding: 0.35rem;
+  vertical-align: top;
+  text-align: left;
+}
+
+.error {
+  color: #b80000;
+  font-weight: 700;
+}
+
+@media (max-width: 960px) {
+  .panels {
+    grid-template-columns: 1fr;
+  }
+}
